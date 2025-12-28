@@ -2,7 +2,7 @@
 import os
 from datetime import datetime
 
-from utils.db import get_connection, escape
+from utils.db import get_connection, escape, get_schema
 from utils.jwt_utils import create_access_token, decode_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from utils.cookies import get_refresh_token_from_cookie
 from utils.http import response, error
@@ -26,13 +26,14 @@ def handle(event: dict) -> dict:
     token_hash = hash_token(refresh_token)
     now = datetime.utcnow().isoformat()
 
+    S = get_schema()
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute(f"""
         SELECT rt.id, u.email, u.name
-        FROM refresh_tokens rt
-        JOIN users u ON u.id = rt.user_id
+        FROM {S}refresh_tokens rt
+        JOIN {S}users u ON u.id = rt.user_id
         WHERE rt.token_hash = {escape(token_hash)}
           AND rt.user_id = {escape(user_id)}
           AND rt.expires_at > {escape(now)}

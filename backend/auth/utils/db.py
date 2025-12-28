@@ -5,21 +5,17 @@ from typing import Any
 
 
 def get_connection():
-    """Get database connection with proper schema search_path."""
+    """Get database connection."""
     dsn = os.environ.get('DATABASE_URL')
     if not dsn:
         raise ValueError('DATABASE_URL not configured')
+    return psycopg2.connect(dsn)
 
-    conn = psycopg2.connect(dsn)
 
-    # Set search_path to project schema if provided
-    schema = os.environ.get('DB_SCHEMA')
-    if schema:
-        cur = conn.cursor()
-        cur.execute(f"SET search_path TO {schema}")
-        cur.close()
-
-    return conn
+def get_schema() -> str:
+    """Get schema prefix for tables. Returns 'schema.' or empty string."""
+    schema = os.environ.get('DB_SCHEMA', '')
+    return f"{schema}." if schema else ""
 
 
 def escape(value: Any) -> str:
