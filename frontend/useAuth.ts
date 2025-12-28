@@ -1,9 +1,10 @@
 /**
- * Auth Email Extension - useAuth Hook
+ * Auth Email Extension - useAuth Hook (Secure)
  *
- * Хук для управления авторизацией в React приложении.
+ * JWT-based authentication with automatic token refresh.
+ * Refresh token stored in HttpOnly cookie (handled by backend).
  */
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 // ============================================================================
 // ТИПЫ
@@ -13,12 +14,6 @@ export interface User {
   id: number;
   email: string;
   name: string | null;
-}
-
-export interface AuthState {
-  user: User | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
 }
 
 export interface LoginPayload {
@@ -32,22 +27,21 @@ export interface RegisterPayload {
   name?: string;
 }
 
-export interface ResetPasswordPayload {
-  email?: string;
-  token?: string;
-  newPassword?: string;
-}
-
 interface AuthApiUrls {
   login: string;
   register: string;
+  refresh: string;
+  logout: string;
   resetPassword: string;
 }
 
 interface UseAuthOptions {
   apiUrls: AuthApiUrls;
   onAuthChange?: (user: User | null) => void;
-  storageKey?: string;
+  /** Auto-refresh access token before expiry (default: true) */
+  autoRefresh?: boolean;
+  /** Refresh token N seconds before expiry (default: 60) */
+  refreshBeforeExpiry?: number;
 }
 
 interface UseAuthReturn {
@@ -55,47 +49,150 @@ interface UseAuthReturn {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  accessToken: string | null;
   login: (payload: LoginPayload) => Promise<boolean>;
   register: (payload: RegisterPayload) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  refreshToken: () => Promise<boolean>;
   requestPasswordReset: (email: string) => Promise<{ token?: string }>;
   resetPassword: (token: string, newPassword: string) => Promise<boolean>;
+  getAuthHeader: () => { Authorization: string } | {};
 }
 
 // ============================================================================
 // КОНСТАНТЫ
 // ============================================================================
 
-const DEFAULT_STORAGE_KEY = "auth_session";
+const ACCESS_TOKEN_KEY = "access_token";
+const TOKEN_EXPIRY_KEY = "token_expiry";
+const USER_KEY = "auth_user";
 
 // ============================================================================
 // ХУК
 // ============================================================================
 
 export function useAuth(options: UseAuthOptions): UseAuthReturn {
-  const { apiUrls, onAuthChange, storageKey = DEFAULT_STORAGE_KEY } = options;
+  const {
+    apiUrls,
+    onAuthChange,
+    autoRefresh = true,
+    refreshBeforeExpiry = 60,
+  } = options;
 
   const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load session from storage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem(storageKey);
-    if (stored) {
-      try {
-        const session = JSON.parse(stored);
-        if (session.expires_at && new Date(session.expires_at) > new Date()) {
-          setUser(session.user);
-        } else {
-          localStorage.removeItem(storageKey);
-        }
-      } catch {
-        localStorage.removeItem(storageKey);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Schedule token refresh
+  const scheduleRefresh = useCallback(
+    (expiresIn: number) => {
+      if (!autoRefresh) return;
+
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
       }
+
+      const refreshIn = Math.max((expiresIn - refreshBeforeExpiry) * 1000, 0);
+
+      refreshTimerRef.current = setTimeout(async () => {
+        await refreshTokenFn();
+      }, refreshIn);
+    },
+    [autoRefresh, refreshBeforeExpiry]
+  );
+
+  // Save tokens to memory and localStorage (for access token only)
+  const saveTokens = useCallback(
+    (token: string, expiresIn: number, userData: User) => {
+      const expiry = Date.now() + expiresIn * 1000;
+
+      setAccessToken(token);
+      setUser(userData);
+
+      // Store in localStorage for persistence across tabs
+      localStorage.setItem(ACCESS_TOKEN_KEY, token);
+      localStorage.setItem(TOKEN_EXPIRY_KEY, expiry.toString());
+      localStorage.setItem(USER_KEY, JSON.stringify(userData));
+
+      scheduleRefresh(expiresIn);
+    },
+    [scheduleRefresh]
+  );
+
+  // Clear tokens
+  const clearTokens = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
     }
-    setIsLoading(false);
-  }, [storageKey]);
+
+    setAccessToken(null);
+    setUser(null);
+
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(TOKEN_EXPIRY_KEY);
+    localStorage.removeItem(USER_KEY);
+  }, []);
+
+  // Refresh access token using HttpOnly cookie
+  const refreshTokenFn = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await fetch(apiUrls.refresh, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // Include HttpOnly cookie
+      });
+
+      if (!response.ok) {
+        clearTokens();
+        return false;
+      }
+
+      const data = await response.json();
+      saveTokens(data.access_token, data.expires_in, data.user);
+      return true;
+    } catch {
+      clearTokens();
+      return false;
+    }
+  }, [apiUrls.refresh, saveTokens, clearTokens]);
+
+  // Load session on mount
+  useEffect(() => {
+    const loadSession = async () => {
+      const storedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+      const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+      const storedUser = localStorage.getItem(USER_KEY);
+
+      if (storedToken && storedExpiry && storedUser) {
+        const expiry = parseInt(storedExpiry, 10);
+        const now = Date.now();
+
+        if (expiry > now) {
+          // Token still valid
+          const remainingSeconds = Math.floor((expiry - now) / 1000);
+          setAccessToken(storedToken);
+          setUser(JSON.parse(storedUser));
+          scheduleRefresh(remainingSeconds);
+        } else {
+          // Token expired, try refresh
+          await refreshTokenFn();
+        }
+      }
+
+      setIsLoading(false);
+    };
+
+    loadSession();
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, [refreshTokenFn, scheduleRefresh]);
 
   // Notify on auth change
   useEffect(() => {
@@ -114,6 +211,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         const response = await fetch(apiUrls.login, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include", // Accept HttpOnly cookie
           body: JSON.stringify(payload),
         });
 
@@ -124,17 +222,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
           return false;
         }
 
-        // Save session
-        localStorage.setItem(
-          storageKey,
-          JSON.stringify({
-            token: data.session_token,
-            expires_at: data.expires_at,
-            user: data.user,
-          })
-        );
-
-        setUser(data.user);
+        saveTokens(data.access_token, data.expires_in, data.user);
         return true;
       } catch (err) {
         setError("Ошибка сети");
@@ -143,7 +231,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         setIsLoading(false);
       }
     },
-    [apiUrls.login, storageKey]
+    [apiUrls.login, saveTokens]
   );
 
   /**
@@ -183,10 +271,18 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
   /**
    * Logout user
    */
-  const logout = useCallback(() => {
-    localStorage.removeItem(storageKey);
-    setUser(null);
-  }, [storageKey]);
+  const logout = useCallback(async () => {
+    try {
+      await fetch(apiUrls.logout, {
+        method: "POST",
+        credentials: "include", // Clear HttpOnly cookie
+      });
+    } catch {
+      // Ignore errors, clear locally anyway
+    }
+
+    clearTokens();
+  }, [apiUrls.logout, clearTokens]);
 
   /**
    * Request password reset
@@ -210,7 +306,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         }
 
         return { token: data.reset_token };
-      } catch (err) {
+      } catch {
         setError("Ошибка сети");
         return {};
       }
@@ -240,7 +336,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         }
 
         return true;
-      } catch (err) {
+      } catch {
         setError("Ошибка сети");
         return false;
       }
@@ -248,16 +344,27 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     [apiUrls.resetPassword]
   );
 
+  /**
+   * Get Authorization header for API requests
+   */
+  const getAuthHeader = useCallback(() => {
+    if (!accessToken) return {};
+    return { Authorization: `Bearer ${accessToken}` };
+  }, [accessToken]);
+
   return {
     user,
-    isAuthenticated: !!user,
+    isAuthenticated: !!user && !!accessToken,
     isLoading,
     error,
+    accessToken,
     login,
     register,
     logout,
+    refreshToken: refreshTokenFn,
     requestPasswordReset,
     resetPassword,
+    getAuthHeader,
   };
 }
 
@@ -266,26 +373,22 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 // ============================================================================
 
 /**
- * Get session token from storage
+ * Get access token from storage (for non-React code)
  */
-export function getSessionToken(storageKey = DEFAULT_STORAGE_KEY): string | null {
-  try {
-    const stored = localStorage.getItem(storageKey);
-    if (stored) {
-      const session = JSON.parse(stored);
-      if (session.expires_at && new Date(session.expires_at) > new Date()) {
-        return session.token;
-      }
-    }
-  } catch {
-    // ignore
+export function getAccessToken(): string | null {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  const expiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+
+  if (token && expiry && parseInt(expiry, 10) > Date.now()) {
+    return token;
   }
+
   return null;
 }
 
 /**
- * Check if user is authenticated
+ * Check if user is authenticated (for non-React code)
  */
-export function isAuthenticated(storageKey = DEFAULT_STORAGE_KEY): boolean {
-  return !!getSessionToken(storageKey);
+export function isAuthenticated(): boolean {
+  return !!getAccessToken();
 }

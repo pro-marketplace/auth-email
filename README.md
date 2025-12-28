@@ -1,215 +1,232 @@
-# Auth Email Extension
+# Auth Email Extension (Secure)
 
-Авторизация и регистрация пользователей по email и паролю.
+Безопасная авторизация и регистрация по email + пароль с JWT токенами.
 
-## Что включено
+## Безопасность
 
-- `backend/auth-register/` — регистрация нового пользователя
-- `backend/auth-login/` — вход с email и паролем
-- `backend/auth-reset-password/` — сброс пароля
-- `frontend/useAuth.ts` — React хук для управления авторизацией
-- `frontend/LoginForm.tsx` — форма входа (shadcn/ui)
-- `frontend/RegisterForm.tsx` — форма регистрации (shadcn/ui)
-- `frontend/ResetPasswordForm.tsx` — форма сброса пароля (shadcn/ui)
+- **bcrypt** для хеширования паролей (cost factor 12)
+- **JWT** access tokens (короткоживущие, 15 мин)
+- **Refresh tokens** в HttpOnly cookies (защита от XSS)
+- **Rate limiting** при входе (5 попыток, затем блокировка 15 мин)
+- **Токены сброса пароля** с коротким сроком жизни (1 час)
+- **Отзыв сессий** при смене пароля
+- **Защита от перебора email** (одинаковый ответ для существующих/несуществующих)
+
+## Структура
+
+```
+backend/
+├── auth-register/       # Регистрация
+├── auth-login/          # Вход + выдача JWT
+├── auth-refresh/        # Обновление access token
+├── auth-logout/         # Выход + отзыв токена
+└── auth-reset-password/ # Сброс пароля
+
+frontend/
+├── useAuth.ts           # React хук с auto-refresh
+├── LoginForm.tsx        # Форма входа
+├── RegisterForm.tsx     # Форма регистрации
+└── ResetPasswordForm.tsx
+```
 
 ## Установка
 
 ### 1. База данных
 
-Выполни миграцию для создания таблиц:
-
 ```sql
 -- Пользователи
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(64) NOT NULL,
-    salt VARCHAR(32) NOT NULL,
+    password_hash VARCHAR(72) NOT NULL,  -- bcrypt hash
     name VARCHAR(255),
+    failed_login_attempts INTEGER DEFAULT 0,
+    last_failed_login_at TIMESTAMP,
+    last_login_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login_at TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Сессии
-CREATE TABLE IF NOT EXISTS sessions (
+-- Refresh токены (для отзыва)
+CREATE TABLE refresh_tokens (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(64) UNIQUE NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,  -- SHA-256 hash
     expires_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Токены сброса пароля
-CREATE TABLE IF NOT EXISTS password_reset_tokens (
+CREATE TABLE password_reset_tokens (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(64) UNIQUE NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,  -- SHA-256 hash
     expires_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_refresh_tokens_hash ON refresh_tokens(token_hash);
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
+CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
 ```
 
 ### 2. Секреты
 
-| Переменная | Описание |
-|------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `SESSION_LIFETIME_DAYS` | Время жизни сессии в днях (по умолчанию 30) |
+| Переменная | Описание | Пример |
+|------------|----------|--------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
+| `JWT_SECRET` | **Обязательно!** Секретный ключ для JWT | `openssl rand -hex 32` |
+| `CORS_ORIGIN` | Домен фронтенда | `https://example.com` |
+| `COOKIE_SECURE` | HTTPS only cookies | `true` (production) |
+| `COOKIE_SAMESITE` | Cookie SameSite policy | `Strict` или `Lax` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Время жизни access token | `15` |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Время жизни refresh token | `30` |
+| `MAX_LOGIN_ATTEMPTS` | Лимит попыток входа | `5` |
+| `LOCKOUT_MINUTES` | Время блокировки | `15` |
 
-### 3. Backend
-
-Скопируй папки `backend/*` в свой проект и выполни sync_backend.
-
-### 4. Frontend
-
-Скопируй файлы из `frontend/` в свой проект:
+### 3. Frontend
 
 ```tsx
 import { useAuth } from "@/lib/useAuth";
 import { LoginForm } from "@/components/LoginForm";
-import { RegisterForm } from "@/components/RegisterForm";
-import { ResetPasswordForm } from "@/components/ResetPasswordForm";
 
-function AuthPage() {
-  const [view, setView] = useState<"login" | "register" | "reset">("login");
-
+function App() {
   const auth = useAuth({
     apiUrls: {
       login: func2url["auth-login"],
       register: func2url["auth-register"],
+      refresh: func2url["auth-refresh"],
+      logout: func2url["auth-logout"],
       resetPassword: func2url["auth-reset-password"],
     },
     onAuthChange: (user) => {
-      if (user) router.push("/dashboard");
+      console.log("Auth changed:", user);
     },
   });
 
-  if (view === "register") {
-    return (
-      <RegisterForm
-        onRegister={auth.register}
-        onSuccess={() => router.push("/dashboard")}
-        onLoginClick={() => setView("login")}
-        error={auth.error}
-        isLoading={auth.isLoading}
-        className="w-full max-w-md"
-      />
-    );
-  }
+  // Для API запросов
+  const fetchData = async () => {
+    const res = await fetch("/api/data", {
+      headers: auth.getAuthHeader(),
+    });
+  };
 
-  if (view === "reset") {
-    return (
-      <ResetPasswordForm
-        onRequestReset={auth.requestPasswordReset}
-        onResetPassword={auth.resetPassword}
-        onLoginClick={() => setView("login")}
-        error={auth.error}
-        className="w-full max-w-md"
-      />
-    );
+  if (auth.isLoading) return <div>Loading...</div>;
+
+  if (!auth.isAuthenticated) {
+    return <LoginForm onLogin={auth.login} error={auth.error} />;
   }
 
   return (
-    <LoginForm
-      onLogin={auth.login}
-      onSuccess={() => router.push("/dashboard")}
-      onRegisterClick={() => setView("register")}
-      onForgotPasswordClick={() => setView("reset")}
-      error={auth.error}
-      isLoading={auth.isLoading}
-      className="w-full max-w-md"
-    />
+    <div>
+      <p>Welcome, {auth.user?.name}</p>
+      <button onClick={auth.logout}>Logout</button>
+    </div>
   );
 }
+```
+
+## Token Flow
+
+```
+1. Login
+   POST /auth-login {email, password}
+   ↓
+   Response: {access_token, expires_in, user}
+   + Set-Cookie: refresh_token (HttpOnly, Secure, SameSite)
+
+2. API Requests
+   Authorization: Bearer {access_token}
+
+3. Token Refresh (auto, before expiry)
+   POST /auth-refresh
+   Cookie: refresh_token
+   ↓
+   Response: {access_token, expires_in, user}
+
+4. Logout
+   POST /auth-logout
+   ↓
+   Deletes refresh_token from DB
+   Clears cookie
 ```
 
 ## API
 
 ### POST /auth-register
 
-Регистрация нового пользователя.
-
-**Request:**
 ```json
-{
-  "email": "user@example.com",
-  "password": "securepass123",
-  "name": "Иван Иванов"
-}
-```
+// Request
+{ "email": "user@example.com", "password": "SecurePass123", "name": "Иван" }
 
-**Response (201):**
-```json
-{
-  "user_id": 1,
-  "message": "Регистрация успешна"
-}
+// Response 201
+{ "user_id": 1, "message": "Регистрация успешна" }
 ```
 
 ### POST /auth-login
 
-Авторизация пользователя.
-
-**Request:**
 ```json
+// Request
+{ "email": "user@example.com", "password": "SecurePass123" }
+
+// Response 200
 {
-  "email": "user@example.com",
-  "password": "securepass123"
+  "access_token": "eyJ...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": { "id": 1, "email": "user@example.com", "name": "Иван" }
+}
+// + Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict
+```
+
+### POST /auth-refresh
+
+```json
+// Cookie: refresh_token=...
+
+// Response 200
+{
+  "access_token": "eyJ...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": { "id": 1, "email": "user@example.com", "name": "Иван" }
 }
 ```
 
-**Response (200):**
+### POST /auth-logout
+
 ```json
-{
-  "session_token": "abc123...",
-  "expires_at": "2025-01-28T10:00:00Z",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "Иван Иванов"
-  }
-}
+// Response 200
+{ "message": "Logged out successfully" }
+// + Set-Cookie: refresh_token=; Expires=Thu, 01 Jan 1970...
 ```
 
 ### POST /auth-reset-password
 
-**Шаг 1: Запрос сброса**
 ```json
+// Step 1: Request reset
 { "email": "user@example.com" }
+// Response: { "message": "...", "reset_token": "..." }
+
+// Step 2: Set new password
+{ "token": "...", "new_password": "NewSecurePass123" }
+// Response: { "message": "Пароль успешно изменён" }
 ```
-
-**Шаг 2: Сброс пароля**
-```json
-{
-  "token": "reset_token_here",
-  "new_password": "newSecurePass123"
-}
-```
-
-## Безопасность
-
-- Пароли хранятся как SHA-256 хеш с уникальной солью
-- Сессионные токены: 256-bit secure random
-- Токены сброса пароля действуют 24 часа
-- При сбросе пароля все сессии пользователя инвалидируются
 
 ## Требования к паролю
 
 - Минимум 8 символов
+- Максимум 128 символов
 - Хотя бы одна буква
 - Хотя бы одна цифра
 
 ## Чеклист
 
+- [ ] `JWT_SECRET` установлен (32+ случайных байта)
+- [ ] `CORS_ORIGIN` указывает на ваш домен (не `*` в production)
+- [ ] `COOKIE_SECURE=true` для HTTPS
 - [ ] Миграция БД применена
 - [ ] Backend функции задеплоены
-- [ ] Frontend компоненты добавлены
-- [ ] shadcn/ui компоненты установлены (Button, Input, Label, Card)
-- [ ] Тестовая регистрация проходит
-- [ ] Тестовый вход проходит
+- [ ] Тестовая регистрация/вход работает
+- [ ] Token refresh работает автоматически
