@@ -6,11 +6,14 @@
 
 - **bcrypt** для хеширования паролей (cost factor 12)
 - **JWT** access tokens (короткоживущие, 15 мин)
-- **Refresh tokens** в HttpOnly cookies (защита от XSS)
+- **Refresh tokens** через `X-Refresh-Token` header (совместимость с Yandex Cloud Functions)
 - **Rate limiting** при входе (5 попыток, затем блокировка 15 мин)
 - **Токены сброса пароля** с коротким сроком жизни (1 час)
 - **Отзыв сессий** при смене пароля
 - **Защита от перебора email** (одинаковый ответ для существующих/несуществующих)
+
+> **Примечание**: Yandex Cloud Functions перехватывает стандартные `Cookie` и `Authorization` заголовки.
+> Поэтому refresh token передаётся через кастомный заголовок `X-Refresh-Token`.
 
 ## Структура
 
@@ -133,23 +136,24 @@ function App() {
 1. Login
    POST /auth-login {email, password}
    ↓
-   Response: {access_token, expires_in, user}
-   + Set-Cookie: refresh_token (HttpOnly, Secure, SameSite)
+   Response: {access_token, refresh_token, expires_in, refresh_expires_in, user}
+   Frontend saves both tokens to localStorage
 
 2. API Requests
-   Authorization: Bearer {access_token}
+   Header: Authorization: Bearer {access_token}
 
 3. Token Refresh (auto, before expiry)
    POST /auth-refresh
-   Cookie: refresh_token
+   Header: X-Refresh-Token: {refresh_token}
    ↓
    Response: {access_token, expires_in, user}
 
 4. Logout
    POST /auth-logout
+   Header: X-Refresh-Token: {refresh_token}
    ↓
    Deletes refresh_token from DB
-   Clears cookie
+   Frontend clears localStorage
 ```
 
 ## API
@@ -173,17 +177,19 @@ function App() {
 // Response 200
 {
   "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
   "token_type": "Bearer",
   "expires_in": 900,
+  "refresh_expires_in": 2592000,
   "user": { "id": 1, "email": "user@example.com", "name": "Иван" }
 }
-// + Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict
 ```
 
 ### POST /auth-refresh
 
 ```json
-// Cookie: refresh_token=...
+// Header: X-Refresh-Token: eyJ...
+// OR Body: { "refresh_token": "eyJ..." }
 
 // Response 200
 {
@@ -197,9 +203,11 @@ function App() {
 ### POST /auth-logout
 
 ```json
+// Header: X-Refresh-Token: eyJ...
+// OR Body: { "refresh_token": "eyJ..." }
+
 // Response 200
 { "message": "Logged out successfully" }
-// + Set-Cookie: refresh_token=; Expires=Thu, 01 Jan 1970...
 ```
 
 ### POST /auth-reset-password

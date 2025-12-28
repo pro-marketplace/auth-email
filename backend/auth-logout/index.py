@@ -1,15 +1,14 @@
 """
 Auth Email Extension - Logout
 
-Revokes refresh token and clears cookie.
+Revokes refresh token.
+Для Yandex Cloud Functions: токен передаётся через X-Refresh-Token header или body.
 """
 import json
 import os
 import hashlib
 import psycopg2
-from datetime import datetime
 from typing import Optional
-from http.cookies import SimpleCookie
 
 
 def get_db_connection():
@@ -24,59 +23,49 @@ def get_cors_origin() -> str:
     return os.environ.get('CORS_ORIGIN', '*')
 
 
-def get_refresh_token_from_cookie(event: dict) -> Optional[str]:
-    """Extract refresh_token from Cookie header."""
-    headers = event.get('headers', {})
-    cookie_header = headers.get('Cookie') or headers.get('cookie', '')
-
-    if not cookie_header:
-        return None
-
-    cookie = SimpleCookie()
-    cookie.load(cookie_header)
-
-    if 'refresh_token' in cookie:
-        return cookie['refresh_token'].value
-
-    return None
-
-
-def make_clear_cookie() -> str:
-    """Create cookie that clears refresh_token."""
-    secure = os.environ.get('COOKIE_SECURE', 'true').lower() == 'true'
-    same_site = os.environ.get('COOKIE_SAMESITE', 'Strict')
-
-    cookie_parts = [
-        'refresh_token=',
-        'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-        'HttpOnly',
-        'Path=/',
-        f'SameSite={same_site}'
-    ]
-
-    if secure:
-        cookie_parts.append('Secure')
-
-    return '; '.join(cookie_parts)
-
-
-def make_headers(set_cookie: Optional[str] = None) -> dict:
+def make_headers() -> dict:
     origin = get_cors_origin()
-    headers = {
+    return {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Refresh-Token',
         'Access-Control-Allow-Credentials': 'true' if origin != '*' else 'false',
         'Content-Type': 'application/json'
     }
-    if set_cookie:
-        headers['Set-Cookie'] = set_cookie
-    return headers
+
+
+def get_refresh_token(event: dict) -> Optional[str]:
+    """
+    Extract refresh token from:
+    1. X-Refresh-Token header
+    2. Request body { refresh_token: "..." }
+    """
+    headers = event.get('headers', {})
+
+    token = (
+        headers.get('X-Refresh-Token') or
+        headers.get('x-refresh-token') or
+        headers.get('X-REFRESH-TOKEN')
+    )
+
+    if token:
+        return token
+
+    body_str = event.get('body', '{}')
+    try:
+        payload = json.loads(body_str)
+        return payload.get('refresh_token')
+    except json.JSONDecodeError:
+        return None
 
 
 def handler(event: dict, context) -> dict:
     """
-    Logout user by revoking refresh token and clearing cookie.
+    Logout user by revoking refresh token.
+
+    Token can be passed via:
+    - X-Refresh-Token header
+    - POST body { "refresh_token": "..." }
     """
     method = event.get('httpMethod', 'GET').upper()
 
@@ -91,8 +80,7 @@ def handler(event: dict, context) -> dict:
             'isBase64Encoded': False
         }
 
-    # Get refresh token from cookie
-    refresh_token = get_refresh_token_from_cookie(event)
+    refresh_token = get_refresh_token(event)
 
     if refresh_token:
         # Revoke token in DB
@@ -107,12 +95,9 @@ def handler(event: dict, context) -> dict:
         cur.close()
         conn.close()
 
-    # Clear cookie
-    clear_cookie = make_clear_cookie()
-
     return {
         'statusCode': 200,
-        'headers': make_headers(set_cookie=clear_cookie),
+        'headers': make_headers(),
         'body': json.dumps({'message': 'Logged out successfully'}),
         'isBase64Encoded': False
     }

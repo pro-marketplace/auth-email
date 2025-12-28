@@ -72,38 +72,16 @@ def create_refresh_token(user_id: int) -> tuple[str, datetime]:
     return token, expire
 
 
-def make_headers(set_cookie: Optional[str] = None) -> dict:
+def make_headers() -> dict:
     """Create response headers."""
     origin = get_cors_origin()
-    headers = {
+    return {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Refresh-Token',
         'Access-Control-Allow-Credentials': 'true' if origin != '*' else 'false',
         'Content-Type': 'application/json'
     }
-    if set_cookie:
-        headers['Set-Cookie'] = set_cookie
-    return headers
-
-
-def make_refresh_cookie(token: str, expires: datetime) -> str:
-    """Create secure HttpOnly cookie for refresh token."""
-    secure = os.environ.get('COOKIE_SECURE', 'true').lower() == 'true'
-    same_site = os.environ.get('COOKIE_SAMESITE', 'Strict')
-
-    cookie_parts = [
-        f'refresh_token={token}',
-        f'Expires={expires.strftime("%a, %d %b %Y %H:%M:%S GMT")}',
-        'HttpOnly',
-        'Path=/',
-        f'SameSite={same_site}'
-    ]
-
-    if secure:
-        cookie_parts.append('Secure')
-
-    return '; '.join(cookie_parts)
 
 
 def check_rate_limit(cur, email: str) -> tuple[bool, Optional[int]]:
@@ -268,16 +246,16 @@ def handler(event: dict, context) -> dict:
     cur.close()
     conn.close()
 
-    # Set refresh token as HttpOnly cookie
-    cookie = make_refresh_cookie(refresh_token, refresh_expires)
-
+    # Return both tokens in response body (for Yandex Cloud Functions compatibility)
     return {
         'statusCode': 200,
-        'headers': make_headers(set_cookie=cookie),
+        'headers': make_headers(),
         'body': json.dumps({
             'access_token': access_token,
+            'refresh_token': refresh_token,
             'token_type': 'Bearer',
             'expires_in': ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            'refresh_expires_in': REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
             'user': {
                 'id': user_id,
                 'email': user_email,
