@@ -1,5 +1,5 @@
 """Logout handler."""
-from utils.db import get_connection
+from utils.db import get_connection, escape
 from utils.jwt_utils import hash_token
 from utils.cookies import get_refresh_token_from_cookie, make_clear_cookie
 from utils.http import response
@@ -14,7 +14,7 @@ def handle(event: dict) -> dict:
 
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("DELETE FROM refresh_tokens WHERE token_hash = %s", (token_hash,))
+        cur.execute(f"DELETE FROM refresh_tokens WHERE token_hash = {escape(token_hash)}")
         conn.commit()
         cur.close()
         conn.close()

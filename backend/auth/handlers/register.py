@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from utils.db import get_connection
+from utils.db import get_connection, escape
 from utils.password import hash_password, validate_password, validate_email
 from utils.http import response, error
 
@@ -26,20 +26,20 @@ def handle(event: dict) -> dict:
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+    cur.execute(f"SELECT id FROM users WHERE email = {escape(email)}")
     if cur.fetchone():
         cur.close()
         conn.close()
         return error(409, 'Пользователь с таким email уже существует')
 
     password_hash = hash_password(password)
-    now = datetime.utcnow()
+    now = datetime.utcnow().isoformat()
 
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO users (email, password_hash, name, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s)
+        VALUES ({escape(email)}, {escape(password_hash)}, {escape(name or None)}, {escape(now)}, {escape(now)})
         RETURNING id
-    """, (email, password_hash, name or None, now, now))
+    """)
 
     user_id = cur.fetchone()[0]
     conn.commit()

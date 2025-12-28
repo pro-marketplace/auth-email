@@ -1,6 +1,7 @@
 """Database utilities."""
 import os
 import psycopg2
+from typing import Any
 
 
 def get_connection():
@@ -9,3 +10,16 @@ def get_connection():
     if not dsn:
         raise ValueError('DATABASE_URL not configured')
     return psycopg2.connect(dsn)
+
+
+def escape(value: Any) -> str:
+    """Escape value for SQL (simple protocol)."""
+    if value is None:
+        return 'NULL'
+    if isinstance(value, bool):
+        return 'TRUE' if value else 'FALSE'
+    if isinstance(value, (int, float)):
+        return str(value)
+    # String - escape quotes
+    s = str(value).replace("'", "''")
+    return f"'{s}'"

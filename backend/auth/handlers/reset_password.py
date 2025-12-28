@@ -3,7 +3,7 @@ import json
 import secrets
 from datetime import datetime, timedelta
 
-from utils.db import get_connection
+from utils.db import get_connection, escape
 from utils.password import hash_password, validate_password
 from utils.jwt_utils import hash_token
 from utils.http import response, error
@@ -30,7 +30,7 @@ def handle(event: dict) -> dict:
 
     # Step 1: Request password reset
     if email and not token:
-        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        cur.execute(f"SELECT id FROM users WHERE email = {escape(email)}")
         user = cur.fetchone()
 
         # Same response regardless of user existence (prevent enumeration)
@@ -40,15 +40,16 @@ def handle(event: dict) -> dict:
             user_id = user[0]
 
             reset_token = secrets.token_urlsafe(32)
-            expires_at = datetime.utcnow() + timedelta(hours=RESET_TOKEN_LIFETIME_HOURS)
+            expires_at = (datetime.utcnow() + timedelta(hours=RESET_TOKEN_LIFETIME_HOURS)).isoformat()
+            now = datetime.utcnow().isoformat()
 
-            cur.execute("DELETE FROM password_reset_tokens WHERE user_id = %s", (user_id,))
+            cur.execute(f"DELETE FROM password_reset_tokens WHERE user_id = {escape(user_id)}")
 
             token_hash = hash_token(reset_token)
-            cur.execute("""
+            cur.execute(f"""
                 INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, token_hash, expires_at, datetime.utcnow()))
+                VALUES ({escape(user_id)}, {escape(token_hash)}, {escape(expires_at)}, {escape(now)})
+            """)
 
             conn.commit()
             cur.close()
@@ -75,11 +76,12 @@ def handle(event: dict) -> dict:
             return error(400, error_msg)
 
         token_hash = hash_token(token)
+        now = datetime.utcnow().isoformat()
 
-        cur.execute("""
+        cur.execute(f"""
             SELECT user_id FROM password_reset_tokens
-            WHERE token_hash = %s AND expires_at > %s
-        """, (token_hash, datetime.utcnow()))
+            WHERE token_hash = {escape(token_hash)} AND expires_at > {escape(now)}
+        """)
 
         token_record = cur.fetchone()
         if not token_record:
@@ -90,16 +92,16 @@ def handle(event: dict) -> dict:
         user_id = token_record[0]
         password_hash = hash_password(new_password)
 
-        cur.execute("""
-            UPDATE users SET password_hash = %s, updated_at = %s
-            WHERE id = %s
-        """, (password_hash, datetime.utcnow(), user_id))
+        cur.execute(f"""
+            UPDATE users SET password_hash = {escape(password_hash)}, updated_at = {escape(now)}
+            WHERE id = {escape(user_id)}
+        """)
 
         # Delete used token (single-use)
-        cur.execute("DELETE FROM password_reset_tokens WHERE token_hash = %s", (token_hash,))
+        cur.execute(f"DELETE FROM password_reset_tokens WHERE token_hash = {escape(token_hash)}")
 
         # Revoke all refresh tokens (force re-login)
-        cur.execute("DELETE FROM refresh_tokens WHERE user_id = %s", (user_id,))
+        cur.execute(f"DELETE FROM refresh_tokens WHERE user_id = {escape(user_id)}")
 
         conn.commit()
         cur.close()

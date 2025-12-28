@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from utils.db import get_connection
+from utils.db import get_connection, escape
 from utils.password import verify_password
 from utils.jwt_utils import create_access_token, create_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from utils.cookies import make_refresh_cookie
@@ -16,10 +16,10 @@ LOCKOUT_MINUTES = int(os.environ.get('LOCKOUT_MINUTES', '15'))
 
 def check_rate_limit(cur, email: str) -> tuple[bool, int | None]:
     """Check if user is rate limited. Returns (is_allowed, remaining_seconds)."""
-    cur.execute("""
+    cur.execute(f"""
         SELECT failed_login_attempts, last_failed_login_at
-        FROM users WHERE email = %s
-    """, (email,))
+        FROM users WHERE email = {escape(email)}
+    """)
 
     result = cur.fetchone()
     if not result:
@@ -38,24 +38,26 @@ def check_rate_limit(cur, email: str) -> tuple[bool, int | None]:
 
 def increment_failed_attempts(cur, conn, email: str):
     """Increment failed login attempts counter."""
-    cur.execute("""
+    now = datetime.utcnow().isoformat()
+    cur.execute(f"""
         UPDATE users
         SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1,
-            last_failed_login_at = %s
-        WHERE email = %s
-    """, (datetime.utcnow(), email))
+            last_failed_login_at = {escape(now)}
+        WHERE email = {escape(email)}
+    """)
     conn.commit()
 
 
 def reset_failed_attempts(cur, conn, user_id: int):
     """Reset failed login attempts on successful login."""
-    cur.execute("""
+    now = datetime.utcnow().isoformat()
+    cur.execute(f"""
         UPDATE users
         SET failed_login_attempts = 0,
             last_failed_login_at = NULL,
-            last_login_at = %s
-        WHERE id = %s
-    """, (datetime.utcnow(), user_id))
+            last_login_at = {escape(now)}
+        WHERE id = {escape(user_id)}
+    """)
     conn.commit()
 
 
@@ -85,10 +87,10 @@ def handle(event: dict) -> dict:
         return error(429, f'Слишком много попыток. Повторите через {remaining // 60 + 1} мин.')
 
     # Find user
-    cur.execute("""
+    cur.execute(f"""
         SELECT id, email, name, password_hash
-        FROM users WHERE email = %s
-    """, (email,))
+        FROM users WHERE email = {escape(email)}
+    """)
 
     user = cur.fetchone()
     auth_error_msg = 'Неверный email или пароль'
@@ -114,10 +116,13 @@ def handle(event: dict) -> dict:
 
     # Store refresh token hash
     refresh_hash = hash_token(refresh_token)
-    cur.execute("""
+    now = datetime.utcnow().isoformat()
+    expires_at = refresh_expires.isoformat()
+
+    cur.execute(f"""
         INSERT INTO refresh_tokens (user_id, token_hash, expires_at, created_at)
-        VALUES (%s, %s, %s, %s)
-    """, (user_id, refresh_hash, refresh_expires, datetime.utcnow()))
+        VALUES ({escape(user_id)}, {escape(refresh_hash)}, {escape(expires_at)}, {escape(now)})
+    """)
 
     conn.commit()
     cur.close()
