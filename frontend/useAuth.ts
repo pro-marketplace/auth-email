@@ -3,6 +3,18 @@
  *
  * JWT-based authentication with HttpOnly cookie for refresh token.
  * Access token in memory, refresh token in HttpOnly cookie (XSS-safe).
+ *
+ * Usage:
+ * const AUTH_BASE = func2url["auth"];
+ * const auth = useAuth({
+ *   apiUrls: {
+ *     login: `${AUTH_BASE}/login`,
+ *     register: `${AUTH_BASE}/register`,
+ *     refresh: `${AUTH_BASE}/refresh`,
+ *     logout: `${AUTH_BASE}/logout`,
+ *     resetPassword: `${AUTH_BASE}/reset-password`,
+ *   },
+ * });
  */
 import { useState, useCallback, useEffect, useRef } from "react";
 

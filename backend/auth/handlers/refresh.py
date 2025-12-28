@@ -1,0 +1,59 @@
+"""Token refresh handler."""
+import os
+from datetime import datetime
+
+from utils.db import get_connection
+from utils.jwt_utils import create_access_token, decode_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from utils.cookies import get_refresh_token_from_cookie
+from utils.http import response, error
+
+
+def handle(event: dict) -> dict:
+    """Refresh access token using refresh token from HttpOnly cookie."""
+    jwt_secret = os.environ.get('JWT_SECRET')
+    if not jwt_secret:
+        return error(500, 'JWT_SECRET not configured')
+
+    refresh_token = get_refresh_token_from_cookie(event)
+    if not refresh_token:
+        return error(401, 'Refresh token not found')
+
+    payload = decode_refresh_token(refresh_token)
+    if not payload:
+        return error(401, 'Invalid or expired refresh token')
+
+    user_id = int(payload.get('sub'))
+    token_hash = hash_token(refresh_token)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT rt.id, u.email, u.name
+        FROM refresh_tokens rt
+        JOIN users u ON u.id = rt.user_id
+        WHERE rt.token_hash = %s AND rt.user_id = %s AND rt.expires_at > %s
+    """, (token_hash, user_id, datetime.utcnow()))
+
+    result = cur.fetchone()
+    if not result:
+        cur.close()
+        conn.close()
+        return error(401, 'Refresh token revoked or expired')
+
+    _, user_email, user_name = result
+    cur.close()
+    conn.close()
+
+    access_token = create_access_token(user_id, user_email)
+
+    return response(200, {
+        'access_token': access_token,
+        'token_type': 'Bearer',
+        'expires_in': ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        'user': {
+            'id': user_id,
+            'email': user_email,
+            'name': user_name
+        }
+    })
