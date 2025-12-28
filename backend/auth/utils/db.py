@@ -1,10 +1,7 @@
-"""Database utilities."""
+"""Database utilities for Simple Query Protocol."""
 import os
 import psycopg2
 from typing import Any
-
-
-_schema_cache: str | None = None
 
 
 def get_connection():
@@ -16,33 +13,9 @@ def get_connection():
 
 
 def get_schema() -> str:
-    """Get schema prefix for tables. Returns 'schema.' or empty string."""
-    global _schema_cache
-
-    if _schema_cache is not None:
-        return _schema_cache
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    # Get project schema (starts with t_, not system schemas)
-    cur.execute("""
-        SELECT schema_name FROM information_schema.schemata
-        WHERE schema_name LIKE 't_%'
-        ORDER BY schema_name
-        LIMIT 1
-    """)
-
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if result:
-        _schema_cache = f"{result[0]}."
-    else:
-        _schema_cache = ""
-
-    return _schema_cache
+    """Get schema prefix from env. Returns 'schema.' or empty string."""
+    schema = os.environ.get('DB_SCHEMA', '')
+    return f"{schema}." if schema else ""
 
 
 def escape(value: Any) -> str:
@@ -53,6 +26,50 @@ def escape(value: Any) -> str:
         return 'TRUE' if value else 'FALSE'
     if isinstance(value, (int, float)):
         return str(value)
-    # String - escape quotes
+    # String - escape single quotes
     s = str(value).replace("'", "''")
     return f"'{s}'"
+
+
+def query(sql: str) -> list:
+    """Execute SELECT query and return all rows."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(sql)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def query_one(sql: str):
+    """Execute SELECT query and return first row or None."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(sql)
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+
+def execute(sql: str) -> None:
+    """Execute INSERT/UPDATE/DELETE query."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(sql)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def execute_returning(sql: str):
+    """Execute INSERT with RETURNING and return first value."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(sql)
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return result[0] if result else None

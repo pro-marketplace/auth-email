@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from utils.db import get_connection, escape, get_schema
+from utils.db import query_one, execute_returning, escape, get_schema
 from utils.password import hash_password, validate_password, validate_email
 from utils.http import response, error
 
@@ -24,27 +24,20 @@ def handle(event: dict) -> dict:
         return error(400, error_msg)
 
     S = get_schema()
-    conn = get_connection()
-    cur = conn.cursor()
 
-    cur.execute(f"SELECT id FROM {S}users WHERE email = {escape(email)}")
-    if cur.fetchone():
-        cur.close()
-        conn.close()
+    # Check if user exists
+    existing = query_one(f"SELECT id FROM {S}users WHERE email = {escape(email)}")
+    if existing:
         return error(409, 'Пользователь с таким email уже существует')
 
+    # Create user
     password_hash = hash_password(password)
     now = datetime.utcnow().isoformat()
 
-    cur.execute(f"""
+    user_id = execute_returning(f"""
         INSERT INTO {S}users (email, password_hash, name, created_at, updated_at)
         VALUES ({escape(email)}, {escape(password_hash)}, {escape(name or None)}, {escape(now)}, {escape(now)})
         RETURNING id
     """)
-
-    user_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
 
     return response(201, {'user_id': user_id, 'message': 'Регистрация успешна'})
