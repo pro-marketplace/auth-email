@@ -1,9 +1,8 @@
 /**
- * Auth Email Extension - useAuth Hook
+ * Auth Email Extension - useAuth Hook (Secure)
  *
- * JWT-based authentication with automatic token refresh.
- * Adapted for Yandex Cloud Functions (no HttpOnly cookies).
- * Refresh token stored in localStorage, passed via X-Refresh-Token header.
+ * JWT-based authentication with HttpOnly cookie for refresh token.
+ * Access token in memory, refresh token in HttpOnly cookie (XSS-safe).
  */
 import { useState, useCallback, useEffect, useRef } from "react";
 
@@ -43,8 +42,6 @@ interface UseAuthOptions {
   autoRefresh?: boolean;
   /** Refresh token N seconds before expiry (default: 60) */
   refreshBeforeExpiry?: number;
-  /** Storage key prefix (default: "auth") */
-  storagePrefix?: string;
 }
 
 interface UseAuthReturn {
@@ -72,16 +69,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     onAuthChange,
     autoRefresh = true,
     refreshBeforeExpiry = 60,
-    storagePrefix = "auth",
   } = options;
-
-  const KEYS = {
-    accessToken: `${storagePrefix}_access_token`,
-    refreshToken: `${storagePrefix}_refresh_token`,
-    accessExpiry: `${storagePrefix}_access_expiry`,
-    refreshExpiry: `${storagePrefix}_refresh_expiry`,
-    user: `${storagePrefix}_user`,
-  };
 
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -90,17 +78,14 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear all tokens
-  const clearTokens = useCallback(() => {
+  // Clear state
+  const clearAuth = useCallback(() => {
     if (refreshTimerRef.current) {
       clearTimeout(refreshTimerRef.current);
     }
-
     setAccessToken(null);
     setUser(null);
-
-    Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
-  }, [KEYS]);
+  }, []);
 
   // Schedule token refresh
   const scheduleRefresh = useCallback(
@@ -116,129 +101,54 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
       refreshTimerRef.current = setTimeout(async () => {
         const success = await refreshFn();
         if (!success) {
-          clearTokens();
+          clearAuth();
         }
       }, refreshIn);
     },
-    [autoRefresh, refreshBeforeExpiry, clearTokens]
+    [autoRefresh, refreshBeforeExpiry, clearAuth]
   );
 
-  // Save tokens to state and localStorage
-  const saveTokens = useCallback(
-    (
-      newAccessToken: string,
-      newRefreshToken: string,
-      accessExpiresIn: number,
-      refreshExpiresIn: number,
-      userData: User,
-      refreshFn: () => Promise<boolean>
-    ) => {
-      const accessExpiry = Date.now() + accessExpiresIn * 1000;
-      const refreshExpiry = Date.now() + refreshExpiresIn * 1000;
-
-      setAccessToken(newAccessToken);
-      setUser(userData);
-
-      localStorage.setItem(KEYS.accessToken, newAccessToken);
-      localStorage.setItem(KEYS.refreshToken, newRefreshToken);
-      localStorage.setItem(KEYS.accessExpiry, accessExpiry.toString());
-      localStorage.setItem(KEYS.refreshExpiry, refreshExpiry.toString());
-      localStorage.setItem(KEYS.user, JSON.stringify(userData));
-
-      scheduleRefresh(accessExpiresIn, refreshFn);
-    },
-    [KEYS, scheduleRefresh]
-  );
-
-  // Update only access token (after refresh)
-  const updateAccessToken = useCallback(
-    (newAccessToken: string, expiresIn: number, userData: User, refreshFn: () => Promise<boolean>) => {
-      const accessExpiry = Date.now() + expiresIn * 1000;
-
-      setAccessToken(newAccessToken);
-      setUser(userData);
-
-      localStorage.setItem(KEYS.accessToken, newAccessToken);
-      localStorage.setItem(KEYS.accessExpiry, accessExpiry.toString());
-      localStorage.setItem(KEYS.user, JSON.stringify(userData));
-
-      scheduleRefresh(expiresIn, refreshFn);
-    },
-    [KEYS, scheduleRefresh]
-  );
-
-  // Refresh access token
+  // Refresh access token using HttpOnly cookie
   const refreshTokenFn = useCallback(async (): Promise<boolean> => {
-    const storedRefreshToken = localStorage.getItem(KEYS.refreshToken);
-    const refreshExpiry = localStorage.getItem(KEYS.refreshExpiry);
-
-    if (!storedRefreshToken || !refreshExpiry) {
-      return false;
-    }
-
-    // Check if refresh token expired
-    if (parseInt(refreshExpiry, 10) < Date.now()) {
-      clearTokens();
-      return false;
-    }
-
     try {
       const response = await fetch(apiUrls.refresh, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Refresh-Token": storedRefreshToken,
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // Send HttpOnly cookie
       });
 
       if (!response.ok) {
-        clearTokens();
+        clearAuth();
         return false;
       }
 
       const data = await response.json();
-      updateAccessToken(data.access_token, data.expires_in, data.user, refreshTokenFn);
+      setAccessToken(data.access_token);
+      setUser(data.user);
+      scheduleRefresh(data.expires_in, refreshTokenFn);
       return true;
     } catch {
-      clearTokens();
+      clearAuth();
       return false;
     }
-  }, [apiUrls.refresh, KEYS, clearTokens, updateAccessToken]);
+  }, [apiUrls.refresh, clearAuth, scheduleRefresh]);
 
-  // Load session on mount
+  // Try to restore session on mount
   useEffect(() => {
-    const loadSession = async () => {
-      const storedAccessToken = localStorage.getItem(KEYS.accessToken);
-      const storedAccessExpiry = localStorage.getItem(KEYS.accessExpiry);
-      const storedUser = localStorage.getItem(KEYS.user);
-
-      if (storedAccessToken && storedAccessExpiry && storedUser) {
-        const expiry = parseInt(storedAccessExpiry, 10);
-        const now = Date.now();
-
-        if (expiry > now) {
-          // Access token still valid
-          const remainingSeconds = Math.floor((expiry - now) / 1000);
-          setAccessToken(storedAccessToken);
-          setUser(JSON.parse(storedUser));
-          scheduleRefresh(remainingSeconds, refreshTokenFn);
-        } else {
-          // Access token expired, try refresh
-          await refreshTokenFn();
-        }
-      }
-
+    const restoreSession = async () => {
+      // Try to refresh - if cookie exists, we'll get a new access token
+      await refreshTokenFn();
       setIsLoading(false);
     };
 
-    loadSession();
+    restoreSession();
 
     return () => {
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
       }
     };
-  }, [KEYS, refreshTokenFn, scheduleRefresh]);
+  }, [refreshTokenFn]);
 
   // Notify on auth change
   useEffect(() => {
@@ -257,6 +167,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         const response = await fetch(apiUrls.login, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include", // Accept Set-Cookie
           body: JSON.stringify(payload),
         });
 
@@ -267,14 +178,9 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
           return false;
         }
 
-        saveTokens(
-          data.access_token,
-          data.refresh_token,
-          data.expires_in,
-          data.refresh_expires_in,
-          data.user,
-          refreshTokenFn
-        );
+        setAccessToken(data.access_token);
+        setUser(data.user);
+        scheduleRefresh(data.expires_in, refreshTokenFn);
         return true;
       } catch (err) {
         setError("Ошибка сети");
@@ -283,7 +189,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         setIsLoading(false);
       }
     },
-    [apiUrls.login, saveTokens, refreshTokenFn]
+    [apiUrls.login, scheduleRefresh, refreshTokenFn]
   );
 
   /**
@@ -324,24 +230,17 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
    * Logout user
    */
   const logout = useCallback(async () => {
-    const storedRefreshToken = localStorage.getItem(KEYS.refreshToken);
-
-    if (storedRefreshToken) {
-      try {
-        await fetch(apiUrls.logout, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Refresh-Token": storedRefreshToken,
-          },
-        });
-      } catch {
-        // Ignore errors, clear locally anyway
-      }
+    try {
+      await fetch(apiUrls.logout, {
+        method: "POST",
+        credentials: "include", // Send cookie to revoke, receive Set-Cookie to clear
+      });
+    } catch {
+      // Ignore errors
     }
 
-    clearTokens();
-  }, [apiUrls.logout, KEYS, clearTokens]);
+    clearAuth();
+  }, [apiUrls.logout, clearAuth]);
 
   /**
    * Request password reset
@@ -432,22 +331,13 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 // ============================================================================
 
 /**
- * Get access token from storage (for non-React code)
+ * Check if user might be authenticated (has session).
+ * Note: This doesn't verify the token, just checks if refresh might work.
+ * For actual auth state, use the useAuth hook.
  */
-export function getAccessToken(storagePrefix = "auth"): string | null {
-  const token = localStorage.getItem(`${storagePrefix}_access_token`);
-  const expiry = localStorage.getItem(`${storagePrefix}_access_expiry`);
-
-  if (token && expiry && parseInt(expiry, 10) > Date.now()) {
-    return token;
-  }
-
-  return null;
-}
-
-/**
- * Check if user is authenticated (for non-React code)
- */
-export function isAuthenticated(storagePrefix = "auth"): boolean {
-  return !!getAccessToken(storagePrefix);
+export function mightBeAuthenticated(): boolean {
+  // We can't check HttpOnly cookies from JS
+  // This function exists for API compatibility but always returns false
+  // Use useAuth().isAuthenticated for actual auth state
+  return false;
 }

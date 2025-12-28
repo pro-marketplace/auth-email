@@ -6,23 +6,34 @@
 
 - **bcrypt** для хеширования паролей (cost factor 12)
 - **JWT** access tokens (короткоживущие, 15 мин)
-- **Refresh tokens** через `X-Refresh-Token` header (совместимость с Yandex Cloud Functions)
+- **HttpOnly cookie** для refresh token (защита от XSS)
 - **Rate limiting** при входе (5 попыток, затем блокировка 15 мин)
 - **Токены сброса пароля** с коротким сроком жизни (1 час)
 - **Отзыв сессий** при смене пароля
 - **Защита от перебора email** (одинаковый ответ для существующих/несуществующих)
 
-> **Примечание**: Yandex Cloud Functions перехватывает стандартные `Cookie` и `Authorization` заголовки.
-> Поэтому refresh token передаётся через кастомный заголовок `X-Refresh-Token`.
+### Работа с Yandex Cloud Functions
+
+Yandex Cloud Functions фильтрует заголовки `Authorization` и `Cookie`.
+Прокси `functions.poehali.dev` выполняет маппинг:
+
+| Направление | Маппинг |
+|-------------|---------|
+| Запрос к функции | `Cookie` → `X-Cookie` |
+| Запрос к функции | `Authorization` → `X-Authorization` |
+| Ответ функции | `X-Set-Cookie` → `Set-Cookie` |
+
+**Frontend работает как обычно** — использует `credentials: 'include'` и стандартный `Authorization` header.
+Прокси автоматически конвертирует заголовки.
 
 ## Структура
 
 ```
 backend/
 ├── auth-register/       # Регистрация
-├── auth-login/          # Вход + выдача JWT
-├── auth-refresh/        # Обновление access token
-├── auth-logout/         # Выход + отзыв токена
+├── auth-login/          # Вход + выдача JWT + Set-Cookie
+├── auth-refresh/        # Обновление access token (читает cookie)
+├── auth-logout/         # Выход + отзыв токена + очистка cookie
 └── auth-reset-password/ # Сброс пароля
 
 frontend/
@@ -74,13 +85,14 @@ CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
 ```
 
-### 2. Секреты
+### 2. Переменные окружения
 
 | Переменная | Описание | Пример |
 |------------|----------|--------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
 | `JWT_SECRET` | **Обязательно!** Секретный ключ для JWT | `openssl rand -hex 32` |
 | `CORS_ORIGIN` | Домен фронтенда | `https://example.com` |
+| `COOKIE_DOMAIN` | Домен для cookie | `.example.com` |
 | `COOKIE_SECURE` | HTTPS only cookies | `true` (production) |
 | `COOKIE_SAMESITE` | Cookie SameSite policy | `Strict` или `Lax` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Время жизни access token | `15` |
@@ -135,25 +147,26 @@ function App() {
 ```
 1. Login
    POST /auth-login {email, password}
+   credentials: 'include'
    ↓
-   Response: {access_token, refresh_token, expires_in, refresh_expires_in, user}
-   Frontend saves both tokens to localStorage
+   Response: {access_token, expires_in, user}
+   Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict
 
 2. API Requests
    Header: Authorization: Bearer {access_token}
 
 3. Token Refresh (auto, before expiry)
    POST /auth-refresh
-   Header: X-Refresh-Token: {refresh_token}
+   credentials: 'include' (отправляет HttpOnly cookie)
    ↓
    Response: {access_token, expires_in, user}
 
 4. Logout
    POST /auth-logout
-   Header: X-Refresh-Token: {refresh_token}
+   credentials: 'include'
    ↓
    Deletes refresh_token from DB
-   Frontend clears localStorage
+   Set-Cookie: refresh_token=; Expires=<past>; HttpOnly
 ```
 
 ## API
@@ -171,16 +184,15 @@ function App() {
 ### POST /auth-login
 
 ```json
-// Request
+// Request (credentials: 'include')
 { "email": "user@example.com", "password": "SecurePass123" }
 
 // Response 200
+// Set-Cookie: refresh_token=eyJ...; HttpOnly; Secure; Path=/; SameSite=Strict
 {
   "access_token": "eyJ...",
-  "refresh_token": "eyJ...",
   "token_type": "Bearer",
   "expires_in": 900,
-  "refresh_expires_in": 2592000,
   "user": { "id": 1, "email": "user@example.com", "name": "Иван" }
 }
 ```
@@ -188,8 +200,8 @@ function App() {
 ### POST /auth-refresh
 
 ```json
-// Header: X-Refresh-Token: eyJ...
-// OR Body: { "refresh_token": "eyJ..." }
+// Request (credentials: 'include' - отправляет HttpOnly cookie автоматически)
+// Тело не требуется
 
 // Response 200
 {
@@ -203,10 +215,11 @@ function App() {
 ### POST /auth-logout
 
 ```json
-// Header: X-Refresh-Token: eyJ...
-// OR Body: { "refresh_token": "eyJ..." }
+// Request (credentials: 'include')
+// Тело не требуется
 
 // Response 200
+// Set-Cookie: refresh_token=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly
 { "message": "Logged out successfully" }
 ```
 
@@ -233,8 +246,10 @@ function App() {
 
 - [ ] `JWT_SECRET` установлен (32+ случайных байта)
 - [ ] `CORS_ORIGIN` указывает на ваш домен (не `*` в production)
+- [ ] `COOKIE_DOMAIN` настроен для вашего домена
 - [ ] `COOKIE_SECURE=true` для HTTPS
 - [ ] Миграция БД применена
 - [ ] Backend функции задеплоены
 - [ ] Тестовая регистрация/вход работает
 - [ ] Token refresh работает автоматически
+- [ ] Cookies корректно устанавливаются (проверить DevTools → Application → Cookies)

@@ -3,7 +3,7 @@ Auth Email Extension - User Login (Secure)
 
 Security features:
 - JWT access + refresh tokens
-- HttpOnly cookie for refresh token
+- HttpOnly cookie for refresh token (via X-Set-Cookie proxy mapping)
 - Rate limiting via failed_login_attempts
 - bcrypt password verification
 """
@@ -11,6 +11,7 @@ import json
 import os
 import jwt
 import bcrypt
+import hashlib
 import psycopg2
 from datetime import datetime, timedelta
 from typing import Optional
@@ -39,6 +40,11 @@ def get_db_connection():
 def get_cors_origin() -> str:
     """Get allowed CORS origin from env."""
     return os.environ.get('CORS_ORIGIN', '*')
+
+
+def get_cookie_domain() -> str:
+    """Get cookie domain from env."""
+    return os.environ.get('COOKIE_DOMAIN', '')
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -72,16 +78,42 @@ def create_refresh_token(user_id: int) -> tuple[str, datetime]:
     return token, expire
 
 
-def make_headers() -> dict:
+def make_refresh_cookie(token: str, expires: datetime) -> str:
+    """Create HttpOnly cookie string for refresh token."""
+    secure = os.environ.get('COOKIE_SECURE', 'true').lower() == 'true'
+    same_site = os.environ.get('COOKIE_SAMESITE', 'Strict')
+    domain = get_cookie_domain()
+
+    cookie_parts = [
+        f'refresh_token={token}',
+        f'Expires={expires.strftime("%a, %d %b %Y %H:%M:%S GMT")}',
+        'HttpOnly',
+        'Path=/',
+        f'SameSite={same_site}'
+    ]
+
+    if secure:
+        cookie_parts.append('Secure')
+    if domain:
+        cookie_parts.append(f'Domain={domain}')
+
+    return '; '.join(cookie_parts)
+
+
+def make_headers(set_cookie: Optional[str] = None) -> dict:
     """Create response headers."""
     origin = get_cors_origin()
-    return {
+    headers = {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Refresh-Token',
-        'Access-Control-Allow-Credentials': 'true' if origin != '*' else 'false',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Credentials': 'true',
         'Content-Type': 'application/json'
     }
+    if set_cookie:
+        # Use X-Set-Cookie - proxy will convert to Set-Cookie
+        headers['X-Set-Cookie'] = set_cookie
+    return headers
 
 
 def check_rate_limit(cur, email: str) -> tuple[bool, Optional[int]]:
@@ -97,7 +129,7 @@ def check_rate_limit(cur, email: str) -> tuple[bool, Optional[int]]:
 
     attempts, last_failed = result
 
-    if attempts >= MAX_LOGIN_ATTEMPTS and last_failed:
+    if attempts and attempts >= MAX_LOGIN_ATTEMPTS and last_failed:
         lockout_until = last_failed + timedelta(minutes=LOCKOUT_MINUTES)
         if datetime.utcnow() < lockout_until:
             remaining = int((lockout_until - datetime.utcnow()).total_seconds())
@@ -234,7 +266,6 @@ def handler(event: dict, context) -> dict:
     refresh_token, refresh_expires = create_refresh_token(user_id)
 
     # Store refresh token hash in DB for revocation support
-    import hashlib
     refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
 
     cur.execute("""
@@ -246,16 +277,16 @@ def handler(event: dict, context) -> dict:
     cur.close()
     conn.close()
 
-    # Return both tokens in response body (for Yandex Cloud Functions compatibility)
+    # Set refresh token as HttpOnly cookie via X-Set-Cookie
+    cookie = make_refresh_cookie(refresh_token, refresh_expires)
+
     return {
         'statusCode': 200,
-        'headers': make_headers(),
+        'headers': make_headers(set_cookie=cookie),
         'body': json.dumps({
             'access_token': access_token,
-            'refresh_token': refresh_token,
             'token_type': 'Bearer',
             'expires_in': ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            'refresh_expires_in': REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
             'user': {
                 'id': user_id,
                 'email': user_email,

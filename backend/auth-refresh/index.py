@@ -1,8 +1,8 @@
 """
 Auth Email Extension - Refresh Token
 
-Обновление access token с помощью refresh token.
-Для Yandex Cloud Functions: токен передаётся через X-Refresh-Token header или body.
+Обновление access token с помощью refresh token из HttpOnly cookie.
+Читает cookie через X-Cookie (proxy mapping).
 """
 import json
 import os
@@ -11,6 +11,7 @@ import hashlib
 import psycopg2
 from datetime import datetime, timedelta
 from typing import Optional
+from http.cookies import SimpleCookie
 
 
 JWT_SECRET = os.environ.get('JWT_SECRET')
@@ -35,37 +36,36 @@ def make_headers() -> dict:
     return {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Refresh-Token',
-        'Access-Control-Allow-Credentials': 'true' if origin != '*' else 'false',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Credentials': 'true',
         'Content-Type': 'application/json'
     }
 
 
-def get_refresh_token(event: dict) -> Optional[str]:
+def get_refresh_token_from_cookie(event: dict) -> Optional[str]:
     """
-    Extract refresh token from:
-    1. X-Refresh-Token header (preferred for Yandex Cloud Functions)
-    2. Request body { refresh_token: "..." }
+    Extract refresh_token from X-Cookie header.
+    Proxy maps Cookie -> X-Cookie.
     """
     headers = event.get('headers', {})
 
-    # Try header first (case-insensitive)
-    token = (
-        headers.get('X-Refresh-Token') or
-        headers.get('x-refresh-token') or
-        headers.get('X-REFRESH-TOKEN')
+    # Proxy maps Cookie -> X-Cookie
+    cookie_header = (
+        headers.get('X-Cookie') or
+        headers.get('x-cookie') or
+        ''
     )
 
-    if token:
-        return token
-
-    # Try body
-    body_str = event.get('body', '{}')
-    try:
-        payload = json.loads(body_str)
-        return payload.get('refresh_token')
-    except json.JSONDecodeError:
+    if not cookie_header:
         return None
+
+    cookie = SimpleCookie()
+    cookie.load(cookie_header)
+
+    if 'refresh_token' in cookie:
+        return cookie['refresh_token'].value
+
+    return None
 
 
 def create_access_token(user_id: int, email: str) -> str:
@@ -83,11 +83,12 @@ def create_access_token(user_id: int, email: str) -> str:
 
 def handler(event: dict, context) -> dict:
     """
-    Refresh access token using refresh token.
+    Refresh access token using refresh token from HttpOnly cookie.
 
-    Token can be passed via:
-    - X-Refresh-Token header
-    - POST body { "refresh_token": "..." }
+    Security:
+    - Validates refresh token signature
+    - Checks token hash in DB (for revocation support)
+    - Issues new short-lived access token
     """
     method = event.get('httpMethod', 'GET').upper()
 
@@ -110,14 +111,14 @@ def handler(event: dict, context) -> dict:
             'isBase64Encoded': False
         }
 
-    # Get refresh token
-    refresh_token = get_refresh_token(event)
+    # Get refresh token from cookie
+    refresh_token = get_refresh_token_from_cookie(event)
 
     if not refresh_token:
         return {
             'statusCode': 401,
             'headers': make_headers(),
-            'body': json.dumps({'error': 'Refresh token not provided'}),
+            'body': json.dumps({'error': 'Refresh token not found'}),
             'isBase64Encoded': False
         }
 
