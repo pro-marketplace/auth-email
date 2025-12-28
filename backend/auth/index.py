@@ -1,12 +1,12 @@
 """
 Auth Email Extension - Single Function Router
 
-Routes:
-  POST /auth/register       - Register new user
-  POST /auth/login          - Login and get tokens
-  POST /auth/refresh        - Refresh access token
-  POST /auth/logout         - Logout and revoke tokens
-  POST /auth/reset-password - Request/complete password reset
+Routes (via ?action= query parameter):
+  POST /auth?action=register       - Register new user
+  POST /auth?action=login          - Login and get tokens
+  POST /auth?action=refresh        - Refresh access token
+  POST /auth?action=logout         - Logout and revoke tokens
+  POST /auth?action=reset-password - Request/complete password reset
 """
 from handlers import register, login, logout, refresh, reset_password
 from utils.http import options_response, error
@@ -31,18 +31,11 @@ def handler(event: dict, context) -> dict:
     if method != 'POST':
         return error(405, 'Method not allowed')
 
-    # Extract route from path: /auth/login -> login
-    path = event.get('path', '')
-    parts = [p for p in path.strip('/').split('/') if p]
+    # Extract action from query parameters
+    params = event.get('queryStringParameters') or {}
+    action = params.get('action', '')
 
-    # Expected: ['auth', 'login'] or just ['login'] depending on deployment
-    route = None
-    if len(parts) >= 2 and parts[0] == 'auth':
-        route = parts[1]
-    elif len(parts) == 1:
-        route = parts[0]
+    if not action or action not in ROUTES:
+        return error(404, f'Unknown action: {action}. Use ?action=login|register|refresh|logout|reset-password')
 
-    if not route or route not in ROUTES:
-        return error(404, f'Unknown route: {route}')
-
-    return ROUTES[route](event)
+    return ROUTES[action](event)

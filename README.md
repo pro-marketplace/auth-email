@@ -107,16 +107,16 @@ CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)
 ```tsx
 import { useAuth } from "@/lib/useAuth";
 
-const AUTH_BASE = func2url["auth"]; // одна функция
+const AUTH_URL = func2url["auth"]; // одна функция
 
 function App() {
   const auth = useAuth({
     apiUrls: {
-      login: `${AUTH_BASE}/login`,
-      register: `${AUTH_BASE}/register`,
-      refresh: `${AUTH_BASE}/refresh`,
-      logout: `${AUTH_BASE}/logout`,
-      resetPassword: `${AUTH_BASE}/reset-password`,
+      login: `${AUTH_URL}?action=login`,
+      register: `${AUTH_URL}?action=register`,
+      refresh: `${AUTH_URL}?action=refresh`,
+      logout: `${AUTH_URL}?action=logout`,
+      resetPassword: `${AUTH_URL}?action=reset-password`,
     },
   });
 
@@ -137,24 +137,24 @@ function App() {
 
 ## API
 
-Все эндпоинты через одну функцию:
+Все эндпоинты через одну функцию с query parameter `?action=`:
 
 ```
-POST /auth/register        - Регистрация
-POST /auth/login           - Вход
-POST /auth/refresh         - Обновление токена
-POST /auth/logout          - Выход
-POST /auth/reset-password  - Сброс пароля
+POST /auth?action=register        - Регистрация
+POST /auth?action=login           - Вход
+POST /auth?action=refresh         - Обновление токена
+POST /auth?action=logout          - Выход
+POST /auth?action=reset-password  - Сброс пароля
 ```
 
-### POST /auth/register
+### POST /auth?action=register
 
 ```json
 { "email": "user@example.com", "password": "SecurePass123", "name": "Иван" }
 // Response 201: { "user_id": 1, "message": "Регистрация успешна" }
 ```
 
-### POST /auth/login
+### POST /auth?action=login
 
 ```json
 { "email": "user@example.com", "password": "SecurePass123" }
@@ -166,14 +166,14 @@ POST /auth/reset-password  - Сброс пароля
 }
 ```
 
-### POST /auth/refresh
+### POST /auth?action=refresh
 
 ```json
 // credentials: 'include' (cookie автоматически)
 // Response 200: { "access_token": "eyJ...", "expires_in": 900, "user": {...} }
 ```
 
-### POST /auth/logout
+### POST /auth?action=logout
 
 ```json
 // credentials: 'include'
@@ -181,7 +181,7 @@ POST /auth/reset-password  - Сброс пароля
 { "message": "Logged out successfully" }
 ```
 
-### POST /auth/reset-password
+### POST /auth?action=reset-password
 
 ```json
 // Step 1: { "email": "user@example.com" }

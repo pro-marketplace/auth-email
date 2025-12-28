@@ -5,14 +5,14 @@
  * Access token in memory, refresh token in HttpOnly cookie (XSS-safe).
  *
  * Usage:
- * const AUTH_BASE = func2url["auth"];
+ * const AUTH_URL = func2url["auth"];
  * const auth = useAuth({
  *   apiUrls: {
- *     login: `${AUTH_BASE}/login`,
- *     register: `${AUTH_BASE}/register`,
- *     refresh: `${AUTH_BASE}/refresh`,
- *     logout: `${AUTH_BASE}/logout`,
- *     resetPassword: `${AUTH_BASE}/reset-password`,
+ *     login: `${AUTH_URL}?action=login`,
+ *     register: `${AUTH_URL}?action=register`,
+ *     refresh: `${AUTH_URL}?action=refresh`,
+ *     logout: `${AUTH_URL}?action=logout`,
+ *     resetPassword: `${AUTH_URL}?action=reset-password`,
  *   },
  * });
  */
