@@ -3,12 +3,13 @@ from utils.db import query_one, get_schema
 from utils.http import response, error
 
 
-REQUIRED_TABLES = ['users', 'refresh_tokens', 'password_reset_tokens']
+REQUIRED_TABLES = ['users', 'refresh_tokens', 'password_reset_tokens', 'email_verification_tokens']
 
 REQUIRED_COLUMNS = {
-    'users': ['id', 'email', 'password_hash', 'name', 'failed_login_attempts', 'last_failed_login_at', 'last_login_at', 'created_at', 'updated_at'],
+    'users': ['id', 'email', 'password_hash', 'name', 'email_verified', 'failed_login_attempts', 'last_failed_login_at', 'last_login_at', 'created_at', 'updated_at'],
     'refresh_tokens': ['id', 'user_id', 'token_hash', 'expires_at', 'created_at'],
     'password_reset_tokens': ['id', 'user_id', 'token_hash', 'expires_at', 'created_at'],
+    'email_verification_tokens': ['id', 'user_id', 'token_hash', 'expires_at', 'created_at'],
 }
 
 

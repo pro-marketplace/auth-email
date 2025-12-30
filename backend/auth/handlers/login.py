@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from utils.db import query_one, execute, escape, get_schema
 from utils.password import verify_password
 from utils.jwt_utils import create_access_token, create_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from utils.email import is_email_enabled
 from utils.http import response, error
 
 
@@ -44,7 +45,7 @@ def handle(event: dict, origin: str = '*') -> dict:
                 return error(429, f'Слишком много попыток. Повторите через {remaining // 60 + 1} мин.', origin)
 
     user = query_one(f"""
-        SELECT id, email, name, password_hash
+        SELECT id, email, name, password_hash, email_verified
         FROM {S}users WHERE email = {escape(email)}
     """)
 
@@ -53,7 +54,7 @@ def handle(event: dict, origin: str = '*') -> dict:
     if not user:
         return error(401, auth_error_msg, origin)
 
-    user_id, user_email, user_name, stored_hash = user
+    user_id, user_email, user_name, stored_hash, email_verified = user
 
     if not verify_password(password, stored_hash):
         now = datetime.utcnow().isoformat()
@@ -64,6 +65,11 @@ def handle(event: dict, origin: str = '*') -> dict:
             WHERE email = {escape(email)}
         """)
         return error(401, auth_error_msg, origin)
+
+    # Check email verification if required
+    require_verification = is_email_enabled() and os.environ.get('REQUIRE_EMAIL_VERIFICATION', '').lower() == 'true'
+    if require_verification and not email_verified:
+        return error(403, 'Email не подтверждён. Проверьте почту.', origin)
 
     now = datetime.utcnow().isoformat()
     execute(f"""
@@ -94,6 +100,7 @@ def handle(event: dict, origin: str = '*') -> dict:
         'user': {
             'id': user_id,
             'email': user_email,
-            'name': user_name
+            'name': user_name,
+            'email_verified': email_verified
         }
     }, origin)

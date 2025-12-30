@@ -3,13 +3,14 @@ Auth Email Extension - Single Function Router
 
 Routes (via ?action= query parameter):
   GET  /auth?action=health         - Check DB schema (required tables/columns)
+  GET  /auth?action=verify-email   - Verify email with token
   POST /auth?action=register       - Register new user
   POST /auth?action=login          - Login and get tokens
   POST /auth?action=refresh        - Refresh access token
   POST /auth?action=logout         - Logout and revoke tokens
   POST /auth?action=reset-password - Request/complete password reset
 """
-from handlers import register, login, logout, refresh, reset_password, health
+from handlers import register, login, logout, refresh, reset_password, health, verify_email
 from utils.http import options_response, error, get_origin_from_event
 
 
@@ -20,7 +21,11 @@ ROUTES = {
     'logout': logout.handle,
     'reset-password': reset_password.handle,
     'health': health.handle,
+    'verify-email': verify_email.handle,
 }
+
+# Actions that allow GET method
+GET_ACTIONS = {'health', 'verify-email'}
 
 
 def handler(event: dict, context) -> dict:
@@ -35,14 +40,14 @@ def handler(event: dict, context) -> dict:
     params = event.get('queryStringParameters') or {}
     action = params.get('action', '')
 
-    # Health check allows GET
-    if action == 'health' and method == 'GET':
-        return ROUTES['health'](event, origin)
+    # Some actions allow GET
+    if action in GET_ACTIONS and method == 'GET':
+        return ROUTES[action](event, origin)
 
     if method != 'POST':
         return error(405, 'Method not allowed', origin)
 
     if not action or action not in ROUTES:
-        return error(404, f'Unknown action: {action}. Use ?action=health|login|register|refresh|logout|reset-password', origin)
+        return error(404, f'Unknown action: {action}. Use ?action=health|login|register|refresh|logout|reset-password|verify-email', origin)
 
     return ROUTES[action](event, origin)

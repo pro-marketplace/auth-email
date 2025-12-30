@@ -1,11 +1,13 @@
 """Password reset handler."""
 import json
+import os
 import secrets
 from datetime import datetime, timedelta
 
 from utils.db import query_one, execute, escape, get_schema
 from utils.password import hash_password, validate_password
 from utils.jwt_utils import hash_token
+from utils.email import is_email_enabled, send_password_reset_email
 from utils.http import response, error
 
 
@@ -23,6 +25,7 @@ def handle(event: dict, origin: str = '*') -> dict:
 
     S = get_schema()
 
+    # Step 1: Request reset (send email with token)
     if email and not token:
         user = query_one(f"SELECT id FROM {S}users WHERE email = {escape(email)}")
         response_msg = 'Если пользователь существует, ссылка для сброса будет отправлена на email'
@@ -41,14 +44,22 @@ def handle(event: dict, origin: str = '*') -> dict:
                 VALUES ({escape(user_id)}, {escape(token_hash)}, {escape(expires_at)}, {escape(now)})
             """)
 
-            return response(200, {
-                'message': response_msg,
-                'reset_token': reset_token,
-                'expires_in_minutes': RESET_TOKEN_LIFETIME_HOURS * 60
-            }, origin)
+            # Send email if SMTP configured
+            reset_url = os.environ.get('PASSWORD_RESET_URL', '')
+            if is_email_enabled() and reset_url:
+                send_password_reset_email(email, reset_token, reset_url)
+                return response(200, {'message': response_msg}, origin)
+            else:
+                # Return token in response if email not configured (for testing/dev)
+                return response(200, {
+                    'message': response_msg,
+                    'reset_token': reset_token,
+                    'expires_in_minutes': RESET_TOKEN_LIFETIME_HOURS * 60
+                }, origin)
 
         return response(200, {'message': response_msg}, origin)
 
+    # Step 2: Reset password with token
     if token and new_password:
         is_valid, error_msg = validate_password(new_password)
         if not is_valid:
