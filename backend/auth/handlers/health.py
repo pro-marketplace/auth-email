@@ -1,6 +1,6 @@
 """Health check handler - verifies database schema."""
-from utils.db import query_one, get_schema
-from utils.http import response, error
+from ..utils.db import query_one, get_schema
+from ..utils.http import response, error
 
 
 REQUIRED_TABLES = ['users', 'refresh_tokens', 'password_reset_tokens']

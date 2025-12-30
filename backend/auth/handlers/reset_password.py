@@ -3,10 +3,10 @@ import json
 import secrets
 from datetime import datetime, timedelta
 
-from utils.db import query_one, execute, escape, get_schema
-from utils.password import hash_password, validate_password
-from utils.jwt_utils import hash_token
-from utils.http import response, error
+from ..utils.db import query_one, execute, escape, get_schema
+from ..utils.password import hash_password, validate_password
+from ..utils.jwt_utils import hash_token
+from ..utils.http import response, error
 
 
 RESET_TOKEN_LIFETIME_HOURS = 1

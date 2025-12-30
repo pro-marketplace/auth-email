@@ -1,9 +1,9 @@
 """Logout handler."""
 import json
 
-from utils.db import execute, escape, get_schema
-from utils.jwt_utils import hash_token
-from utils.http import response
+from ..utils.db import execute, escape, get_schema
+from ..utils.jwt_utils import hash_token
+from ..utils.http import response
 
 
 def handle(event: dict, origin: str = '*') -> dict:
