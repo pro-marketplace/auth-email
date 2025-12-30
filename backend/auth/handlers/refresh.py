@@ -3,9 +3,9 @@ import json
 import os
 from datetime import datetime
 
-from ..utils.db import query_one, escape, get_schema
-from ..utils.jwt_utils import create_access_token, decode_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES
-from ..utils.http import response, error
+from utils.db import query_one, escape, get_schema
+from utils.jwt_utils import create_access_token, decode_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from utils.http import response, error
 
 
 def handle(event: dict, origin: str = '*') -> dict:

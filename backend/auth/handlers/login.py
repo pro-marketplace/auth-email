@@ -3,10 +3,10 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from ..utils.db import query_one, execute, escape, get_schema
-from ..utils.password import verify_password
-from ..utils.jwt_utils import create_access_token, create_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
-from ..utils.http import response, error
+from utils.db import query_one, execute, escape, get_schema
+from utils.password import verify_password
+from utils.jwt_utils import create_access_token, create_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from utils.http import response, error
 
 
 MAX_LOGIN_ATTEMPTS = int(os.environ.get('MAX_LOGIN_ATTEMPTS', '5'))

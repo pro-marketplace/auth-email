@@ -2,9 +2,9 @@
 import json
 from datetime import datetime
 
-from ..utils.db import query_one, execute_returning, escape, get_schema
-from ..utils.password import hash_password, validate_password, validate_email
-from ..utils.http import response, error
+from utils.db import query_one, execute_returning, escape, get_schema
+from utils.password import hash_password, validate_password, validate_email
+from utils.http import response, error
 
 
 def handle(event: dict, origin: str = '*') -> dict:
