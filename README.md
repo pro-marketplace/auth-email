@@ -121,7 +121,8 @@ CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)
 ```tsx
 import { useAuth } from "@/lib/useAuth";
 
-const AUTH_URL = func2url["auth"]; // одна функция
+// URL функции — обновите после деплоя (см. раздел "После деплоя")
+const AUTH_URL = "https://functions.poehali.dev/xxx";
 
 function App() {
   const auth = useAuth({
@@ -149,17 +150,19 @@ function App() {
 }
 ```
 
-## Проверки после деплоя
+## После деплоя
 
-### 1. Проверить func2url.json
+### 1. Обновить AUTH_URL в коде
 
-Убедитесь что в `func2url.json` появился ключ с URL функции:
+После деплоя функции скопируйте URL из `backend/func2url.json`:
 
 ```json
 {
-  "auth-email-auth": "https://functions.poehali.dev/xxx..."
+  "auth": "https://functions.poehali.dev/d4e..."
 }
 ```
+
+Обновите `AUTH_URL` в вашем frontend-коде на этот URL.
 
 ### 2. Проверить схему БД
 

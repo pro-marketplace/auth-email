@@ -88,6 +88,7 @@ export function RegisterForm({
   };
 
   const displayError = error || localError;
+  const isUserExistsError = displayError?.includes("уже существует");
 
   return (
     <Card className={className}>
@@ -102,6 +103,15 @@ export function RegisterForm({
           {displayError && (
             <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
               {displayError}
+              {isUserExistsError && onLoginClick && (
+                <button
+                  type="button"
+                  onClick={onLoginClick}
+                  className="block mt-2 text-primary hover:underline underline-offset-4"
+                >
+                  Войти в существующий аккаунт
+                </button>
+              )}
             </div>
           )}
 
@@ -201,12 +211,17 @@ export function RegisterForm({
 import { useAuth } from "./useAuth";
 import { RegisterForm } from "./RegisterForm";
 
+// URL функции из настроек расширения (обновляется после деплоя)
+const AUTH_URL = "https://functions.poehali.dev/xxx";
+
 function AuthPage() {
   const { register, error, isLoading } = useAuth({
     apiUrls: {
-      login: func2url["auth-login"],
-      register: func2url["auth-register"],
-      resetPassword: func2url["auth-reset-password"],
+      login: `${AUTH_URL}?action=login`,
+      register: `${AUTH_URL}?action=register`,
+      refresh: `${AUTH_URL}?action=refresh`,
+      logout: `${AUTH_URL}?action=logout`,
+      resetPassword: `${AUTH_URL}?action=reset-password`,
     },
   });
 

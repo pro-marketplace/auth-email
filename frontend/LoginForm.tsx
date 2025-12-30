@@ -156,12 +156,17 @@ export function LoginForm({
 import { useAuth } from "./useAuth";
 import { LoginForm } from "./LoginForm";
 
+// URL функции из настроек расширения (обновляется после деплоя)
+const AUTH_URL = "https://functions.poehali.dev/xxx";
+
 function AuthPage() {
   const { login, error, isLoading } = useAuth({
     apiUrls: {
-      login: func2url["auth-login"],
-      register: func2url["auth-register"],
-      resetPassword: func2url["auth-reset-password"],
+      login: `${AUTH_URL}?action=login`,
+      register: `${AUTH_URL}?action=register`,
+      refresh: `${AUTH_URL}?action=refresh`,
+      logout: `${AUTH_URL}?action=logout`,
+      resetPassword: `${AUTH_URL}?action=reset-password`,
     },
   });
 

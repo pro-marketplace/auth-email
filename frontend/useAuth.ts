@@ -8,7 +8,8 @@
  * Ensure your app has strong CSP headers and validates all user input.
  *
  * Usage:
- * const AUTH_URL = func2url["auth"];
+ * // AUTH_URL берётся из настроек расширения после деплоя
+ * const AUTH_URL = "https://functions.poehali.dev/xxx";
  * const auth = useAuth({
  *   apiUrls: {
  *     login: `${AUTH_URL}?action=login`,
