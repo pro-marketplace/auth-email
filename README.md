@@ -152,9 +152,11 @@ function App() {
 
 ## После деплоя
 
-### 1. Обновить AUTH_URL в коде
+### 1. ВАЖНО: Обновить AUTH_URL в коде
 
-После деплоя функции скопируйте URL из `backend/func2url.json`:
+**После деплоя функции ОБЯЗАТЕЛЬНО обновите URL в frontend-коде!**
+
+URL функции появится в `backend/func2url.json`:
 
 ```json
 {
@@ -162,7 +164,14 @@ function App() {
 }
 ```
 
-Обновите `AUTH_URL` в вашем frontend-коде на этот URL.
+Откройте файл где используется `useAuth` и замените placeholder на реальный URL:
+
+```tsx
+// ЗАМЕНИТЕ xxx на реальный URL из func2url.json
+const AUTH_URL = "https://functions.poehali.dev/xxx";
+```
+
+Без этого шага авторизация работать не будет!
 
 ### 2. Проверить схему БД
 
