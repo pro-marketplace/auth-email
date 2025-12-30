@@ -5,8 +5,7 @@ from datetime import datetime, timedelta
 
 from utils.db import query_one, execute, escape, get_schema
 from utils.password import verify_password
-from utils.jwt_utils import create_access_token, create_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES
-from utils.cookies import make_refresh_cookie
+from utils.jwt_utils import create_access_token, create_refresh_token, hash_token, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
 from utils.http import response, error
 
 
@@ -86,15 +85,15 @@ def handle(event: dict, origin: str = '*') -> dict:
         VALUES ({escape(user_id)}, {escape(refresh_hash)}, {escape(expires_at)}, {escape(now)})
     """)
 
-    cookie = make_refresh_cookie(refresh_token, refresh_expires)
-
     return response(200, {
         'access_token': access_token,
+        'refresh_token': refresh_token,
         'token_type': 'Bearer',
         'expires_in': ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        'refresh_expires_in': REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         'user': {
             'id': user_id,
             'email': user_email,
             'name': user_name
         }
-    }, origin, set_cookie=cookie)
+    }, origin)

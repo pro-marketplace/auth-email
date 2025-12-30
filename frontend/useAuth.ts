@@ -1,8 +1,11 @@
 /**
- * Auth Email Extension - useAuth Hook (Secure)
+ * Auth Email Extension - useAuth Hook
  *
- * JWT-based authentication with HttpOnly cookie for refresh token.
- * Access token in memory, refresh token in HttpOnly cookie (XSS-safe).
+ * JWT-based authentication with localStorage for token storage.
+ * Access token in memory, refresh token in localStorage.
+ *
+ * SECURITY NOTE: localStorage is vulnerable to XSS attacks.
+ * Ensure your app has strong CSP headers and validates all user input.
  *
  * Usage:
  * const AUTH_URL = func2url["auth"];
@@ -21,6 +24,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 // ============================================================================
 // ТИПЫ
 // ============================================================================
+
+const REFRESH_TOKEN_KEY = "auth_refresh_token";
 
 export interface User {
   id: number;
@@ -72,6 +77,25 @@ interface UseAuthReturn {
 }
 
 // ============================================================================
+// ЛОКАЛЬНОЕ ХРАНИЛИЩЕ
+// ============================================================================
+
+function getStoredRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+function setStoredRefreshToken(token: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(REFRESH_TOKEN_KEY, token);
+}
+
+function clearStoredRefreshToken(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
+// ============================================================================
 // ХУК
 // ============================================================================
 
@@ -97,6 +121,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     }
     setAccessToken(null);
     setUser(null);
+    clearStoredRefreshToken();
   }, []);
 
   // Schedule token refresh
@@ -120,13 +145,18 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     [autoRefresh, refreshBeforeExpiry, clearAuth]
   );
 
-  // Refresh access token using HttpOnly cookie
+  // Refresh access token using stored refresh token
   const refreshTokenFn = useCallback(async (): Promise<boolean> => {
+    const storedRefreshToken = getStoredRefreshToken();
+    if (!storedRefreshToken) {
+      return false;
+    }
+
     try {
       const response = await fetch(apiUrls.refresh, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // Send HttpOnly cookie
+        body: JSON.stringify({ refresh_token: storedRefreshToken }),
       });
 
       if (!response.ok) {
@@ -148,8 +178,10 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
   // Try to restore session on mount
   useEffect(() => {
     const restoreSession = async () => {
-      // Try to refresh - if cookie exists, we'll get a new access token
-      await refreshTokenFn();
+      const hasToken = !!getStoredRefreshToken();
+      if (hasToken) {
+        await refreshTokenFn();
+      }
       setIsLoading(false);
     };
 
@@ -179,7 +211,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
         const response = await fetch(apiUrls.login, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "include", // Accept Set-Cookie
           body: JSON.stringify(payload),
         });
 
@@ -192,6 +223,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 
         setAccessToken(data.access_token);
         setUser(data.user);
+        setStoredRefreshToken(data.refresh_token);
         scheduleRefresh(data.expires_in, refreshTokenFn);
         return true;
       } catch (err) {
@@ -242,10 +274,13 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
    * Logout user
    */
   const logout = useCallback(async () => {
+    const storedRefreshToken = getStoredRefreshToken();
+
     try {
       await fetch(apiUrls.logout, {
         method: "POST",
-        credentials: "include", // Send cookie to revoke, receive Set-Cookie to clear
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: storedRefreshToken || "" }),
       });
     } catch {
       // Ignore errors
@@ -343,13 +378,10 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 // ============================================================================
 
 /**
- * Check if user might be authenticated (has session).
- * Note: This doesn't verify the token, just checks if refresh might work.
+ * Check if user might be authenticated (has refresh token in storage).
+ * Note: This doesn't verify the token, just checks if one exists.
  * For actual auth state, use the useAuth hook.
  */
 export function mightBeAuthenticated(): boolean {
-  // We can't check HttpOnly cookies from JS
-  // This function exists for API compatibility but always returns false
-  // Use useAuth().isAuthenticated for actual auth state
-  return false;
+  return !!getStoredRefreshToken();
 }
