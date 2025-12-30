@@ -96,6 +96,7 @@ CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)
 | Переменная | Описание | Пример |
 |------------|----------|--------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
+| `DB_SCHEMA` | **Обязательно!** Схема БД проекта | `t_p18279400_...` |
 | `JWT_SECRET` | **Обязательно!** Секретный ключ | `openssl rand -hex 32` |
 | `CORS_ORIGIN` | Домен фронтенда | `https://example.com` |
 | `COOKIE_DOMAIN` | Домен для cookie | `.example.com` |
@@ -135,16 +136,64 @@ function App() {
 }
 ```
 
+## Проверки после деплоя
+
+### 1. Проверить func2url.json
+
+Убедитесь что в `func2url.json` появился ключ с URL функции:
+
+```json
+{
+  "auth-email-auth": "https://functions.poehali.dev/xxx..."
+}
+```
+
+### 2. Проверить схему БД
+
+Вызовите health check endpoint:
+
+```bash
+curl "https://functions.poehali.dev/xxx...?action=health"
+```
+
+Ожидаемый ответ при успехе:
+```json
+{
+  "status": "ok",
+  "schema": "t_p18279400_...",
+  "tables": ["users", "refresh_tokens", "password_reset_tokens"],
+  "message": "All required tables and columns exist"
+}
+```
+
+При ошибке — список недостающих таблиц/колонок.
+
 ## API
 
 Все эндпоинты через одну функцию с query parameter `?action=`:
 
 ```
+GET  /auth?action=health          - Проверка схемы БД
 POST /auth?action=register        - Регистрация
 POST /auth?action=login           - Вход
 POST /auth?action=refresh         - Обновление токена
 POST /auth?action=logout          - Выход
 POST /auth?action=reset-password  - Сброс пароля
+```
+
+### GET /auth?action=health
+
+```json
+// Response 200 (success):
+{
+  "status": "ok",
+  "schema": "t_p18279400_...",
+  "tables": ["users", "refresh_tokens", "password_reset_tokens"],
+  "message": "All required tables and columns exist"
+}
+
+// Response 500 (error):
+{ "error": "Schema validation failed: Table 'users' not found..." }
 ```
 
 ### POST /auth?action=register
