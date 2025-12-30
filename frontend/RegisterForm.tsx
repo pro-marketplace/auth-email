@@ -224,3 +224,5 @@ function AuthPage() {
   );
 }
 */
+
+export default RegisterForm;

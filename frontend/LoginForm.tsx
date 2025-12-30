@@ -180,3 +180,5 @@ function AuthPage() {
   );
 }
 */
+
+export default LoginForm;

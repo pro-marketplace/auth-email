@@ -268,3 +268,5 @@ export function ResetPasswordForm({
     </Card>
   );
 }
+
+export default ResetPasswordForm;
