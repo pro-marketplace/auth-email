@@ -93,15 +93,26 @@ CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)
 
 ### 2. Переменные окружения
 
+**Обязательные:**
+
 | Переменная | Описание | Пример |
 |------------|----------|--------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
-| `MAIN_DB_SCHEMA` | **Обязательно!** Схема БД проекта | `t_p18279400_...` |
-| `JWT_SECRET` | **Обязательно!** Секретный ключ | `openssl rand -hex 32` |
-| `CORS_ORIGIN` | Домен фронтенда | `https://example.com` |
-| `COOKIE_DOMAIN` | Домен для cookie | `.example.com` |
+| `MAIN_DB_SCHEMA` | Схема БД проекта | `t_p18279400_...` |
+| `JWT_SECRET` | Секретный ключ для JWT | `openssl rand -hex 32` |
+
+**Опциональные:**
+
+| Переменная | Описание | По умолчанию |
+|------------|----------|--------------|
+| `CORS_ORIGIN` | Домен фронтенда | `*` |
+| `COOKIE_DOMAIN` | Домен для cookie | _(не задан)_ |
 | `COOKIE_SECURE` | HTTPS only | `true` |
 | `COOKIE_SAMESITE` | SameSite policy | `Strict` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Время жизни access token | `15` |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Время жизни refresh token | `30` |
+| `MAX_LOGIN_ATTEMPTS` | Лимит попыток входа | `5` |
+| `LOCKOUT_MINUTES` | Время блокировки | `15` |
 
 ### 3. Frontend
 
@@ -199,8 +210,12 @@ POST /auth?action=reset-password  - Сброс пароля
 ### POST /auth?action=register
 
 ```json
+// Обязательные: email, password
+// Опциональные: name
 { "email": "user@example.com", "password": "SecurePass123", "name": "Иван" }
-// Response 201: { "user_id": 1, "message": "Регистрация успешна" }
+
+// Response 201:
+{ "user_id": 1, "message": "Регистрация успешна" }
 ```
 
 ### POST /auth?action=login
