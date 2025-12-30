@@ -7,7 +7,7 @@ from utils.password import hash_password, validate_password, validate_email
 from utils.http import response, error
 
 
-def handle(event: dict) -> dict:
+def handle(event: dict, origin: str = '*') -> dict:
     """Register new user with email and password."""
     body_str = event.get('body', '{}')
     payload = json.loads(body_str)
@@ -17,20 +17,18 @@ def handle(event: dict) -> dict:
     name = str(payload.get('name', '')).strip()[:255]
 
     if not email or not validate_email(email):
-        return error(400, 'Некорректный email')
+        return error(400, 'Некорректный email', origin)
 
     is_valid, error_msg = validate_password(password)
     if not is_valid:
-        return error(400, error_msg)
+        return error(400, error_msg, origin)
 
     S = get_schema()
 
-    # Check if user exists
     existing = query_one(f"SELECT id FROM {S}users WHERE email = {escape(email)}")
     if existing:
-        return error(409, 'Пользователь с таким email уже существует')
+        return error(409, 'Пользователь с таким email уже существует', origin)
 
-    # Create user
     password_hash = hash_password(password)
     now = datetime.utcnow().isoformat()
 
@@ -40,4 +38,4 @@ def handle(event: dict) -> dict:
         RETURNING id
     """)
 
-    return response(201, {'user_id': user_id, 'message': 'Регистрация успешна'})
+    return response(201, {'user_id': user_id, 'message': 'Регистрация успешна'}, origin)

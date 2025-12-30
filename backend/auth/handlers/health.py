@@ -12,18 +12,17 @@ REQUIRED_COLUMNS = {
 }
 
 
-def handle(event: dict) -> dict:
+def handle(event: dict, origin: str = '*') -> dict:
     """Check database schema has all required tables and columns."""
     S = get_schema()
 
     if not S:
-        return error(500, 'DB_SCHEMA not configured')
+        return error(500, 'MAIN_DB_SCHEMA not configured', origin)
 
     schema_name = S.rstrip('.')
     errors = []
 
     for table in REQUIRED_TABLES:
-        # Check table exists
         result = query_one(f"""
             SELECT 1 FROM information_schema.tables
             WHERE table_schema = '{schema_name}' AND table_name = '{table}'
@@ -33,7 +32,6 @@ def handle(event: dict) -> dict:
             errors.append(f"Table '{table}' not found in schema '{schema_name}'")
             continue
 
-        # Check columns
         for column in REQUIRED_COLUMNS[table]:
             col_result = query_one(f"""
                 SELECT 1 FROM information_schema.columns
@@ -46,11 +44,11 @@ def handle(event: dict) -> dict:
                 errors.append(f"Column '{column}' not found in table '{schema_name}.{table}'")
 
     if errors:
-        return error(500, f"Schema validation failed: {'; '.join(errors)}")
+        return error(500, f"Schema validation failed: {'; '.join(errors)}", origin)
 
     return response(200, {
         'status': 'ok',
         'schema': schema_name,
         'tables': REQUIRED_TABLES,
         'message': 'All required tables and columns exist'
-    })
+    }, origin)

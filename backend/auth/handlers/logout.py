@@ -5,7 +5,7 @@ from utils.cookies import get_refresh_token_from_cookie, make_clear_cookie
 from utils.http import response
 
 
-def handle(event: dict) -> dict:
+def handle(event: dict, origin: str = '*') -> dict:
     """Logout user by revoking refresh token and clearing cookie."""
     refresh_token = get_refresh_token_from_cookie(event)
 
@@ -15,4 +15,4 @@ def handle(event: dict) -> dict:
         execute(f"DELETE FROM {S}refresh_tokens WHERE token_hash = {escape(token_hash)}")
 
     clear_cookie = make_clear_cookie()
-    return response(200, {'message': 'Logged out successfully'}, set_cookie=clear_cookie)
+    return response(200, {'message': 'Logged out successfully'}, origin, set_cookie=clear_cookie)

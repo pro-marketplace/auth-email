@@ -14,11 +14,11 @@ MAX_LOGIN_ATTEMPTS = int(os.environ.get('MAX_LOGIN_ATTEMPTS', '5'))
 LOCKOUT_MINUTES = int(os.environ.get('LOCKOUT_MINUTES', '15'))
 
 
-def handle(event: dict) -> dict:
+def handle(event: dict, origin: str = '*') -> dict:
     """Authenticate user and issue JWT tokens."""
     jwt_secret = os.environ.get('JWT_SECRET')
     if not jwt_secret:
-        return error(500, 'JWT_SECRET not configured')
+        return error(500, 'JWT_SECRET not configured', origin)
 
     body_str = event.get('body', '{}')
     payload = json.loads(body_str)
@@ -27,11 +27,10 @@ def handle(event: dict) -> dict:
     password = str(payload.get('password', ''))
 
     if not email or not password:
-        return error(400, 'Email и пароль обязательны')
+        return error(400, 'Email и пароль обязательны', origin)
 
     S = get_schema()
 
-    # Check rate limit
     rate_check = query_one(f"""
         SELECT failed_login_attempts, last_failed_login_at
         FROM {S}users WHERE email = {escape(email)}
@@ -43,9 +42,8 @@ def handle(event: dict) -> dict:
             lockout_until = last_failed + timedelta(minutes=LOCKOUT_MINUTES)
             if datetime.utcnow() < lockout_until:
                 remaining = int((lockout_until - datetime.utcnow()).total_seconds())
-                return error(429, f'Слишком много попыток. Повторите через {remaining // 60 + 1} мин.')
+                return error(429, f'Слишком много попыток. Повторите через {remaining // 60 + 1} мин.', origin)
 
-    # Find user
     user = query_one(f"""
         SELECT id, email, name, password_hash
         FROM {S}users WHERE email = {escape(email)}
@@ -54,12 +52,11 @@ def handle(event: dict) -> dict:
     auth_error_msg = 'Неверный email или пароль'
 
     if not user:
-        return error(401, auth_error_msg)
+        return error(401, auth_error_msg, origin)
 
     user_id, user_email, user_name, stored_hash = user
 
     if not verify_password(password, stored_hash):
-        # Increment failed attempts
         now = datetime.utcnow().isoformat()
         execute(f"""
             UPDATE {S}users
@@ -67,9 +64,8 @@ def handle(event: dict) -> dict:
                 last_failed_login_at = {escape(now)}
             WHERE email = {escape(email)}
         """)
-        return error(401, auth_error_msg)
+        return error(401, auth_error_msg, origin)
 
-    # Success - reset failed attempts
     now = datetime.utcnow().isoformat()
     execute(f"""
         UPDATE {S}users
@@ -79,11 +75,9 @@ def handle(event: dict) -> dict:
         WHERE id = {escape(user_id)}
     """)
 
-    # Create tokens
     access_token = create_access_token(user_id, user_email)
     refresh_token, refresh_expires = create_refresh_token(user_id)
 
-    # Store refresh token hash
     refresh_hash = hash_token(refresh_token)
     expires_at = refresh_expires.isoformat()
 
@@ -103,4 +97,4 @@ def handle(event: dict) -> dict:
             'email': user_email,
             'name': user_name
         }
-    }, set_cookie=cookie)
+    }, origin, set_cookie=cookie)
