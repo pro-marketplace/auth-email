@@ -96,7 +96,7 @@ CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)
 | Переменная | Описание | Пример |
 |------------|----------|--------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
-| `DB_SCHEMA` | **Обязательно!** Схема БД проекта | `t_p18279400_...` |
+| `MAIN_DB_SCHEMA` | **Обязательно!** Схема БД проекта | `t_p18279400_...` |
 | `JWT_SECRET` | **Обязательно!** Секретный ключ | `openssl rand -hex 32` |
 | `CORS_ORIGIN` | Домен фронтенда | `https://example.com` |
 | `COOKIE_DOMAIN` | Домен для cookie | `.example.com` |
