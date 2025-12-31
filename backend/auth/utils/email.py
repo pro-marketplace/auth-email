@@ -1,9 +1,9 @@
-"""Email utilities for sending verification and reset emails."""
+"""Email utilities for sending verification codes."""
 import os
+import random
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Optional
 
 
 def is_email_enabled() -> bool:
@@ -11,16 +11,17 @@ def is_email_enabled() -> bool:
     return bool(os.environ.get('SMTP_USER') and os.environ.get('SMTP_PASSWORD'))
 
 
-def send_email(to_email: str, subject: str, html_body: str, text_body: Optional[str] = None) -> bool:
-    """
-    Send email via SMTP (Gmail by default).
+def generate_code() -> str:
+    """Generate 6-digit verification code."""
+    return str(random.randint(100000, 999999))
 
-    Returns True if sent successfully, False otherwise.
-    """
+
+def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+    """Send email via SMTP (Gmail by default)."""
     smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
     smtp_port = int(os.environ.get('SMTP_PORT', '587'))
     smtp_user = os.environ.get('SMTP_USER', '')
-    smtp_password = os.environ.get('SMTP_PASSWORD', '')  # Gmail App Password
+    smtp_password = os.environ.get('SMTP_PASSWORD', '')
     smtp_from = os.environ.get('SMTP_FROM', smtp_user)
 
     if not smtp_user or not smtp_password:
@@ -31,8 +32,7 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: Optional[
     msg['From'] = smtp_from
     msg['To'] = to_email
 
-    if text_body:
-        msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+    msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
     with smtplib.SMTP(smtp_host, smtp_port) as server:
@@ -43,63 +43,49 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: Optional[
     return True
 
 
-def send_verification_email(to_email: str, token: str, base_url: str) -> bool:
-    """Send email verification link."""
-    verify_url = f"{base_url}?action=verify-email&token={token}"
-
-    subject = "Подтвердите email"
+def send_verification_code(to_email: str, code: str) -> bool:
+    """Send email verification code."""
+    subject = "Код подтверждения"
 
     html_body = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Подтверждение email</h2>
-        <p>Для завершения регистрации подтвердите ваш email:</p>
-        <p style="margin: 30px 0;">
-            <a href="{verify_url}"
-               style="background: #007bff; color: white; padding: 12px 24px;
-                      text-decoration: none; border-radius: 4px;">
-                Подтвердить email
-            </a>
+        <p>Ваш код подтверждения:</p>
+        <p style="font-size: 32px; font-weight: bold; letter-spacing: 8px;
+                  background: #f5f5f5; padding: 20px; text-align: center;
+                  border-radius: 8px; margin: 20px 0;">
+            {code}
         </p>
         <p style="color: #666; font-size: 14px;">
-            Или скопируйте ссылку: {verify_url}
-        </p>
-        <p style="color: #999; font-size: 12px;">
-            Ссылка действительна 24 часа.
+            Код действителен 24 часа. Если вы не регистрировались — проигнорируйте это письмо.
         </p>
     </div>
     """
 
-    text_body = f"Подтвердите email по ссылке: {verify_url}"
+    text_body = f"Ваш код подтверждения: {code}"
 
     return send_email(to_email, subject, html_body, text_body)
 
 
-def send_password_reset_email(to_email: str, token: str, reset_url: str) -> bool:
-    """Send password reset link."""
-    full_url = f"{reset_url}?token={token}"
-
-    subject = "Сброс пароля"
+def send_password_reset_code(to_email: str, code: str) -> bool:
+    """Send password reset code."""
+    subject = "Код для сброса пароля"
 
     html_body = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Сброс пароля</h2>
-        <p>Вы запросили сброс пароля. Нажмите кнопку ниже:</p>
-        <p style="margin: 30px 0;">
-            <a href="{full_url}"
-               style="background: #007bff; color: white; padding: 12px 24px;
-                      text-decoration: none; border-radius: 4px;">
-                Сбросить пароль
-            </a>
+        <p>Ваш код для сброса пароля:</p>
+        <p style="font-size: 32px; font-weight: bold; letter-spacing: 8px;
+                  background: #f5f5f5; padding: 20px; text-align: center;
+                  border-radius: 8px; margin: 20px 0;">
+            {code}
         </p>
         <p style="color: #666; font-size: 14px;">
-            Или скопируйте ссылку: {full_url}
-        </p>
-        <p style="color: #999; font-size: 12px;">
-            Ссылка действительна 1 час. Если вы не запрашивали сброс — проигнорируйте это письмо.
+            Код действителен 1 час. Если вы не запрашивали сброс — проигнорируйте это письмо.
         </p>
     </div>
     """
 
-    text_body = f"Сбросьте пароль по ссылке: {full_url}"
+    text_body = f"Ваш код для сброса пароля: {code}"
 
     return send_email(to_email, subject, html_body, text_body)

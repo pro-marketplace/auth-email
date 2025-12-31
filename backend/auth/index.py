@@ -2,13 +2,13 @@
 Auth Email Extension - Single Function Router
 
 Routes (via ?action= query parameter):
-  GET  /auth?action=health         - Check DB schema (required tables/columns)
-  GET  /auth?action=verify-email   - Verify email with token
   POST /auth?action=register       - Register new user
+  POST /auth?action=verify-email   - Verify email with 6-digit code
   POST /auth?action=login          - Login and get tokens
   POST /auth?action=refresh        - Refresh access token
   POST /auth?action=logout         - Logout and revoke tokens
   POST /auth?action=reset-password - Request/complete password reset
+  GET  /auth?action=health         - Check DB schema
 """
 from handlers import register, login, logout, refresh, reset_password, health, verify_email
 from utils.http import options_response, error, get_origin_from_event
@@ -25,7 +25,7 @@ ROUTES = {
 }
 
 # Actions that allow GET method
-GET_ACTIONS = {'health', 'verify-email'}
+GET_ACTIONS = {'health'}
 
 
 def handler(event: dict, context) -> dict:

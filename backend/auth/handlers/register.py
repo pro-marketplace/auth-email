@@ -1,17 +1,14 @@
 """Registration handler."""
 import json
-import os
-import secrets
 from datetime import datetime, timedelta
 
 from utils.db import query_one, execute_returning, execute, escape, get_schema
 from utils.password import hash_password, validate_password, validate_email
-from utils.jwt_utils import hash_token
-from utils.email import is_email_enabled, send_verification_email
+from utils.email import is_email_enabled, generate_code, send_verification_code
 from utils.http import response, error
 
 
-VERIFICATION_TOKEN_HOURS = 24
+VERIFICATION_CODE_HOURS = 24
 
 
 def handle(event: dict, origin: str = '*') -> dict:
@@ -39,40 +36,35 @@ def handle(event: dict, origin: str = '*') -> dict:
     password_hash = hash_password(password)
     now = datetime.utcnow().isoformat()
 
-    # Check if email verification is enabled
-    require_verification = is_email_enabled() and os.environ.get('REQUIRE_EMAIL_VERIFICATION', '').lower() == 'true'
+    # If SMTP configured -> require email verification
+    email_enabled = is_email_enabled()
 
     user_id = execute_returning(f"""
         INSERT INTO {S}users (email, password_hash, name, email_verified, created_at, updated_at)
-        VALUES ({escape(email)}, {escape(password_hash)}, {escape(name or None)}, {escape(not require_verification)}, {escape(now)}, {escape(now)})
+        VALUES ({escape(email)}, {escape(password_hash)}, {escape(name or None)}, {escape(not email_enabled)}, {escape(now)}, {escape(now)})
         RETURNING id
     """)
 
     result = {
         'user_id': user_id,
         'message': 'Регистрация успешна',
-        'email_verification_required': require_verification
+        'email_verification_required': email_enabled
     }
 
-    # Send verification email if enabled
-    if require_verification:
-        verification_token = secrets.token_urlsafe(32)
-        token_hash = hash_token(verification_token)
-        expires_at = (datetime.utcnow() + timedelta(hours=VERIFICATION_TOKEN_HOURS)).isoformat()
+    # Send verification code if SMTP configured
+    if email_enabled:
+        code = generate_code()
+        expires_at = (datetime.utcnow() + timedelta(hours=VERIFICATION_CODE_HOURS)).isoformat()
 
+        # Store code (hashed for security? no, it's just 6 digits, store plain for simplicity)
         execute(f"""
             INSERT INTO {S}email_verification_tokens (user_id, token_hash, expires_at, created_at)
-            VALUES ({escape(user_id)}, {escape(token_hash)}, {escape(expires_at)}, {escape(now)})
+            VALUES ({escape(user_id)}, {escape(code)}, {escape(expires_at)}, {escape(now)})
         """)
 
-        # Get AUTH_URL from request or env for email link
-        auth_url = os.environ.get('AUTH_URL', '')
-        if auth_url:
-            send_verification_email(email, verification_token, auth_url)
-            result['message'] = 'Регистрация успешна. Проверьте почту для подтверждения.'
+        if send_verification_code(email, code):
+            result['message'] = 'Код подтверждения отправлен на email'
         else:
-            # Return token in response if AUTH_URL not configured (for testing)
-            result['verification_token'] = verification_token
-            result['message'] = 'Регистрация успешна. Подтвердите email.'
+            result['message'] = 'Регистрация успешна, но не удалось отправить код'
 
     return response(201, result, origin)

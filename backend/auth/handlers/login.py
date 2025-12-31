@@ -66,9 +66,8 @@ def handle(event: dict, origin: str = '*') -> dict:
         """)
         return error(401, auth_error_msg, origin)
 
-    # Check email verification if required
-    require_verification = is_email_enabled() and os.environ.get('REQUIRE_EMAIL_VERIFICATION', '').lower() == 'true'
-    if require_verification and not email_verified:
+    # Check email verification if SMTP is configured
+    if is_email_enabled() and not email_verified:
         return error(403, 'Email не подтверждён. Проверьте почту.', origin)
 
     now = datetime.utcnow().isoformat()

@@ -1,92 +1,108 @@
 """Password reset handler."""
 import json
-import os
-import secrets
 from datetime import datetime, timedelta
 
 from utils.db import query_one, execute, escape, get_schema
 from utils.password import hash_password, validate_password
-from utils.jwt_utils import hash_token
-from utils.email import is_email_enabled, send_password_reset_email
+from utils.email import is_email_enabled, generate_code, send_password_reset_code
 from utils.http import response, error
 
 
-RESET_TOKEN_LIFETIME_HOURS = 1
+RESET_CODE_LIFETIME_HOURS = 1
 
 
 def handle(event: dict, origin: str = '*') -> dict:
-    """Password reset: POST {email} or POST {token, new_password}."""
+    """
+    Password reset flow:
+    1. POST {email} - request reset, sends code to email
+    2. POST {email, code, new_password} - set new password with code
+    """
     body_str = event.get('body', '{}')
     payload = json.loads(body_str)
 
     email = str(payload.get('email', '')).lower().strip()
-    token = str(payload.get('token', '')).strip()
+    code = str(payload.get('code', '')).strip()
     new_password = str(payload.get('new_password', ''))
+
+    if not email:
+        return error(400, 'Email обязателен', origin)
 
     S = get_schema()
 
-    # Step 1: Request reset (send email with token)
-    if email and not token:
+    # Step 1: Request reset code
+    if email and not code and not new_password:
         user = query_one(f"SELECT id FROM {S}users WHERE email = {escape(email)}")
-        response_msg = 'Если пользователь существует, ссылка для сброса будет отправлена на email'
+        response_msg = 'Если пользователь существует, код сброса будет отправлен на email'
 
         if user:
             user_id = user[0]
-            reset_token = secrets.token_urlsafe(32)
-            expires_at = (datetime.utcnow() + timedelta(hours=RESET_TOKEN_LIFETIME_HOURS)).isoformat()
             now = datetime.utcnow().isoformat()
 
+            # Delete old tokens
             execute(f"DELETE FROM {S}password_reset_tokens WHERE user_id = {escape(user_id)}")
 
-            token_hash = hash_token(reset_token)
+            # Generate and store new code
+            reset_code = generate_code()
+            expires_at = (datetime.utcnow() + timedelta(hours=RESET_CODE_LIFETIME_HOURS)).isoformat()
+
             execute(f"""
                 INSERT INTO {S}password_reset_tokens (user_id, token_hash, expires_at, created_at)
-                VALUES ({escape(user_id)}, {escape(token_hash)}, {escape(expires_at)}, {escape(now)})
+                VALUES ({escape(user_id)}, {escape(reset_code)}, {escape(expires_at)}, {escape(now)})
             """)
 
-            # Send email if SMTP configured
-            reset_url = os.environ.get('PASSWORD_RESET_URL', '')
-            if is_email_enabled() and reset_url:
-                send_password_reset_email(email, reset_token, reset_url)
-                return response(200, {'message': response_msg}, origin)
+            # Send code via email if SMTP configured
+            if is_email_enabled():
+                if send_password_reset_code(email, reset_code):
+                    return response(200, {'message': response_msg}, origin)
+                else:
+                    return response(200, {'message': 'Не удалось отправить код'}, origin)
             else:
-                # Return token in response if email not configured (for testing/dev)
+                # Return code in response for development
                 return response(200, {
                     'message': response_msg,
-                    'reset_token': reset_token,
-                    'expires_in_minutes': RESET_TOKEN_LIFETIME_HOURS * 60
+                    'reset_code': reset_code,
+                    'expires_in_minutes': RESET_CODE_LIFETIME_HOURS * 60
                 }, origin)
 
         return response(200, {'message': response_msg}, origin)
 
-    # Step 2: Reset password with token
-    if token and new_password:
+    # Step 2: Reset password with code
+    if email and code and new_password:
         is_valid, error_msg = validate_password(new_password)
         if not is_valid:
             return error(400, error_msg, origin)
 
-        token_hash = hash_token(token)
         now = datetime.utcnow().isoformat()
 
+        # Find user
+        user = query_one(f"SELECT id FROM {S}users WHERE email = {escape(email)}")
+        if not user:
+            return error(400, 'Неверный код', origin)
+
+        user_id = user[0]
+
+        # Verify code
         token_record = query_one(f"""
-            SELECT user_id FROM {S}password_reset_tokens
-            WHERE token_hash = {escape(token_hash)} AND expires_at > {escape(now)}
+            SELECT id FROM {S}password_reset_tokens
+            WHERE user_id = {escape(user_id)}
+              AND token_hash = {escape(code)}
+              AND expires_at > {escape(now)}
         """)
 
         if not token_record:
-            return error(400, 'Недействительный или истёкший токен', origin)
+            return error(400, 'Неверный или истёкший код', origin)
 
-        user_id = token_record[0]
-        password_hash = hash_password(new_password)
-
+        # Update password
+        new_password_hash = hash_password(new_password)
         execute(f"""
-            UPDATE {S}users SET password_hash = {escape(password_hash)}, updated_at = {escape(now)}
+            UPDATE {S}users SET password_hash = {escape(new_password_hash)}, updated_at = {escape(now)}
             WHERE id = {escape(user_id)}
         """)
 
-        execute(f"DELETE FROM {S}password_reset_tokens WHERE token_hash = {escape(token_hash)}")
+        # Cleanup tokens
+        execute(f"DELETE FROM {S}password_reset_tokens WHERE user_id = {escape(user_id)}")
         execute(f"DELETE FROM {S}refresh_tokens WHERE user_id = {escape(user_id)}")
 
         return response(200, {'message': 'Пароль успешно изменён'}, origin)
 
-    return error(400, 'Укажите email или token с new_password', origin)
+    return error(400, 'Укажите email для запроса кода или email + code + new_password для сброса', origin)
