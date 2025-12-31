@@ -171,11 +171,13 @@ export function ResetPasswordForm({
     return (
       <Card className={className}>
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl">Пароль изменён</CardTitle>
-          <CardDescription>
-            Ваш пароль успешно обновлён. Теперь вы можете войти с новым паролем.
-          </CardDescription>
+          <CardTitle className="text-2xl">Готово</CardTitle>
         </CardHeader>
+        <CardContent>
+          <div className="text-sm text-green-600 bg-green-50 p-3 rounded-md">
+            Пароль успешно изменён. Теперь вы можете войти с новым паролем.
+          </div>
+        </CardContent>
         <CardFooter>
           {onLoginClick && (
             <Button onClick={onLoginClick} className="w-full">
