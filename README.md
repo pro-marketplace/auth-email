@@ -130,9 +130,14 @@ const auth = useAuth({
   },
 });
 
-// После входа: auth.isAuthenticated && auth.user → показать UserProfile
-// Иначе: LoginForm или RegisterForm
+// Логика отображения:
+if (auth.isAuthenticated && auth.user) {
+  return <UserProfile user={auth.user} onLogout={auth.logout} />;
+}
+return <LoginForm onLogin={auth.login} /* ... */ />;
 ```
+
+**После успешного входа** показывай `UserProfile`, а не уведомление.
 
 ---
 
