@@ -111,7 +111,7 @@ POST ?action=reset-password→ { email } или { email, code, new_password }
 | Файл | Описание |
 |------|----------|
 | `useAuth.ts` | Хук авторизации |
-| `LoginForm.tsx` | Форма входа |
+| `LoginForm.tsx` | Форма входа (поддерживает `successMessage` prop) |
 | `RegisterForm.tsx` | Регистрация + ввод кода |
 | `ResetPasswordForm.tsx` | Сброс пароля |
 | `UserProfile.tsx` | Профиль после входа |

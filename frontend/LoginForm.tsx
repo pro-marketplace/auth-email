@@ -31,6 +31,8 @@ interface LoginFormProps {
   onForgotPasswordClick?: () => void;
   /** Ошибка из useAuth */
   error?: string | null;
+  /** Сообщение об успехе (например, после сброса пароля) */
+  successMessage?: string | null;
   /** Состояние загрузки */
   isLoading?: boolean;
   /** CSS класс для Card */
@@ -47,6 +49,7 @@ export function LoginForm({
   onRegisterClick,
   onForgotPasswordClick,
   error,
+  successMessage,
   isLoading = false,
   className = "",
 }: LoginFormProps): React.ReactElement {
@@ -81,6 +84,12 @@ export function LoginForm({
       </CardHeader>
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
+          {successMessage && (
+            <div className="text-sm text-green-600 bg-green-50 p-3 rounded-md">
+              {successMessage}
+            </div>
+          )}
+
           {displayError && (
             <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
               {displayError}
