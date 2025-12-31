@@ -1,6 +1,6 @@
 """Email utilities for sending verification codes."""
 import os
-import random
+import secrets
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -12,8 +12,8 @@ def is_email_enabled() -> bool:
 
 
 def generate_code() -> str:
-    """Generate 6-digit verification code."""
-    return str(random.randint(100000, 999999))
+    """Generate 6-digit verification code using cryptographically secure random."""
+    return str(secrets.randbelow(900000) + 100000)
 
 
 def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> bool:
@@ -35,12 +35,14 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> b
     msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.sendmail(smtp_from, to_email, msg.as_string())
-
-    return True
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, to_email, msg.as_string())
+        return True
+    except (smtplib.SMTPException, OSError):
+        return False
 
 
 def send_verification_code(to_email: str, code: str) -> bool:

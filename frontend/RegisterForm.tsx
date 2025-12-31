@@ -1,7 +1,7 @@
 /**
  * Auth Email Extension - Register Form
  *
- * Форма регистрации с использованием shadcn/ui компонентов.
+ * Форма регистрации с поддержкой верификации email через 6-значный код.
  */
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp";
 
 // ============================================================================
 // ТИПЫ
 // ============================================================================
+
+interface RegisterResult {
+  success: boolean;
+  emailVerificationRequired: boolean;
+  message?: string;
+}
 
 interface RegisterFormProps {
   /** Функция регистрации из useAuth */
@@ -26,8 +37,12 @@ interface RegisterFormProps {
     email: string;
     password: string;
     name?: string;
-  }) => Promise<boolean>;
-  /** Callback после успешной регистрации */
+  }) => Promise<RegisterResult>;
+  /** Функция верификации email из useAuth */
+  onVerifyEmail: (email: string, code: string) => Promise<boolean>;
+  /** Функция входа из useAuth */
+  onLogin: (payload: { email: string; password: string }) => Promise<boolean>;
+  /** Callback после успешной регистрации и входа */
   onSuccess?: () => void;
   /** Переход на вход */
   onLoginClick?: () => void;
@@ -39,25 +54,32 @@ interface RegisterFormProps {
   className?: string;
 }
 
+type Step = "register" | "verify";
+
 // ============================================================================
 // КОМПОНЕНТ
 // ============================================================================
 
 export function RegisterForm({
   onRegister,
+  onVerifyEmail,
+  onLogin,
   onSuccess,
   onLoginClick,
   error,
   isLoading = false,
   className = "",
 }: RegisterFormProps): React.ReactElement {
+  const [step, setStep] = useState<Step>("register");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [code, setCode] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
 
@@ -76,19 +98,139 @@ export function RegisterForm({
       return;
     }
 
-    const success = await onRegister({
+    const result = await onRegister({
       email,
       password,
       name: name || undefined,
     });
 
-    if (success) {
-      onSuccess?.();
+    if (result.success) {
+      if (result.emailVerificationRequired) {
+        setMessage(result.message || "Код отправлен на email");
+        setStep("verify");
+      } else {
+        onSuccess?.();
+      }
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError(null);
+
+    if (code.length !== 6) {
+      setLocalError("Введите 6-значный код");
+      return;
+    }
+
+    const verified = await onVerifyEmail(email, code);
+
+    if (verified) {
+      // Auto-login after verification
+      const loggedIn = await onLogin({ email, password });
+      if (loggedIn) {
+        onSuccess?.();
+      } else {
+        // If auto-login failed, redirect to login page
+        onLoginClick?.();
+      }
+    }
+  };
+
+  const handleResend = async () => {
+    setLocalError(null);
+    setCode("");
+
+    const result = await onRegister({
+      email,
+      password,
+      name: name || undefined,
+    });
+
+    if (result.success) {
+      setMessage("Код отправлен повторно");
     }
   };
 
   const displayError = error || localError;
-  const isUserExistsError = displayError?.includes("уже существует");
+
+  // ============================================================================
+  // STEP: VERIFY EMAIL
+  // ============================================================================
+
+  if (step === "verify") {
+    return (
+      <Card className={className}>
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-2xl">Подтверждение email</CardTitle>
+          <CardDescription>
+            Введите 6-значный код, отправленный на {email}
+          </CardDescription>
+        </CardHeader>
+        <form onSubmit={handleVerify}>
+          <CardContent className="space-y-4">
+            {message && (
+              <div className="text-sm text-green-600 bg-green-50 p-3 rounded-md">
+                {message}
+              </div>
+            )}
+
+            {displayError && (
+              <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                {displayError}
+              </div>
+            )}
+
+            <div className="flex justify-center py-4">
+              <InputOTP
+                maxLength={6}
+                value={code}
+                onChange={setCode}
+                disabled={isLoading}
+              >
+                <InputOTPGroup>
+                  <InputOTPSlot index={0} />
+                  <InputOTPSlot index={1} />
+                  <InputOTPSlot index={2} />
+                  <InputOTPSlot index={3} />
+                  <InputOTPSlot index={4} />
+                  <InputOTPSlot index={5} />
+                </InputOTPGroup>
+              </InputOTP>
+            </div>
+          </CardContent>
+
+          <CardFooter className="flex flex-col space-y-4">
+            <Button type="submit" className="w-full" disabled={isLoading || code.length !== 6}>
+              {isLoading ? "Проверка..." : "Подтвердить"}
+            </Button>
+
+            <div className="flex items-center justify-between w-full text-sm">
+              <button
+                type="button"
+                onClick={() => setStep("register")}
+                className="text-muted-foreground hover:text-primary"
+              >
+                ← Назад
+              </button>
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={isLoading}
+                className="text-primary hover:underline underline-offset-4"
+              >
+                Отправить код повторно
+              </button>
+            </div>
+          </CardFooter>
+        </form>
+      </Card>
+    );
+  }
+
+  // ============================================================================
+  // STEP: REGISTER
+  // ============================================================================
 
   return (
     <Card className={className}>
@@ -98,12 +240,12 @@ export function RegisterForm({
           Создайте аккаунт для начала работы
         </CardDescription>
       </CardHeader>
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleRegister}>
         <CardContent className="space-y-4">
           {displayError && (
             <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
               {displayError}
-              {isUserExistsError && onLoginClick && (
+              {displayError?.includes("уже существует") && onLoginClick && (
                 <button
                   type="button"
                   onClick={onLoginClick}
@@ -211,14 +353,14 @@ export function RegisterForm({
 import { useAuth } from "./useAuth";
 import { RegisterForm } from "./RegisterForm";
 
-// URL функции из настроек расширения (обновляется после деплоя)
 const AUTH_URL = "https://functions.poehali.dev/xxx";
 
 function AuthPage() {
-  const { register, error, isLoading } = useAuth({
+  const { register, verifyEmail, login, error, isLoading } = useAuth({
     apiUrls: {
       login: `${AUTH_URL}?action=login`,
       register: `${AUTH_URL}?action=register`,
+      verifyEmail: `${AUTH_URL}?action=verify-email`,
       refresh: `${AUTH_URL}?action=refresh`,
       logout: `${AUTH_URL}?action=logout`,
       resetPassword: `${AUTH_URL}?action=reset-password`,
@@ -229,6 +371,8 @@ function AuthPage() {
     <div className="min-h-screen flex items-center justify-center">
       <RegisterForm
         onRegister={register}
+        onVerifyEmail={verifyEmail}
+        onLogin={login}
         onSuccess={() => window.location.href = "/dashboard"}
         onLoginClick={() => setView("login")}
         error={error}

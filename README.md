@@ -138,8 +138,11 @@ GET  /auth?action=health          - Проверка БД
 // Response (без SMTP)
 { "user_id": 1, "message": "Регистрация успешна", "email_verification_required": false }
 
-// Response (с SMTP)
+// Response (с SMTP) - новый пользователь
 { "user_id": 1, "message": "Код подтверждения отправлен на email", "email_verification_required": true }
+
+// Response (с SMTP) - email существует, но не подтверждён → переотправка кода
+{ "user_id": 1, "message": "Код подтверждения отправлен на email", "email_verification_required": true, "resent": true }
 ```
 
 ### verify-email

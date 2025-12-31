@@ -2,18 +2,15 @@
  * Auth Email Extension - useAuth Hook
  *
  * JWT-based authentication with localStorage for token storage.
- * Access token in memory, refresh token in localStorage.
- *
- * SECURITY NOTE: localStorage is vulnerable to XSS attacks.
- * Ensure your app has strong CSP headers and validates all user input.
+ * Supports email verification with 6-digit codes.
  *
  * Usage:
- * // AUTH_URL берётся из настроек расширения после деплоя
  * const AUTH_URL = "https://functions.poehali.dev/xxx";
  * const auth = useAuth({
  *   apiUrls: {
  *     login: `${AUTH_URL}?action=login`,
  *     register: `${AUTH_URL}?action=register`,
+ *     verifyEmail: `${AUTH_URL}?action=verify-email`,
  *     refresh: `${AUTH_URL}?action=refresh`,
  *     logout: `${AUTH_URL}?action=logout`,
  *     resetPassword: `${AUTH_URL}?action=reset-password`,
@@ -32,6 +29,7 @@ export interface User {
   id: number;
   email: string;
   name: string | null;
+  email_verified?: boolean;
 }
 
 export interface LoginPayload {
@@ -45,9 +43,16 @@ export interface RegisterPayload {
   name?: string;
 }
 
+export interface RegisterResult {
+  success: boolean;
+  emailVerificationRequired: boolean;
+  message?: string;
+}
+
 interface AuthApiUrls {
   login: string;
   register: string;
+  verifyEmail: string;
   refresh: string;
   logout: string;
   resetPassword: string;
@@ -56,9 +61,7 @@ interface AuthApiUrls {
 interface UseAuthOptions {
   apiUrls: AuthApiUrls;
   onAuthChange?: (user: User | null) => void;
-  /** Auto-refresh access token before expiry (default: true) */
   autoRefresh?: boolean;
-  /** Refresh token N seconds before expiry (default: 60) */
   refreshBeforeExpiry?: number;
 }
 
@@ -69,11 +72,12 @@ interface UseAuthReturn {
   error: string | null;
   accessToken: string | null;
   login: (payload: LoginPayload) => Promise<boolean>;
-  register: (payload: RegisterPayload) => Promise<boolean>;
+  register: (payload: RegisterPayload) => Promise<RegisterResult>;
+  verifyEmail: (email: string, code: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
-  requestPasswordReset: (email: string) => Promise<{ token?: string }>;
-  resetPassword: (token: string, newPassword: string) => Promise<boolean>;
+  requestPasswordReset: (email: string) => Promise<{ code?: string }>;
+  resetPassword: (email: string, code: string, newPassword: string) => Promise<boolean>;
   getAuthHeader: () => { Authorization: string } | {};
 }
 
@@ -115,7 +119,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear state
   const clearAuth = useCallback(() => {
     if (refreshTimerRef.current) {
       clearTimeout(refreshTimerRef.current);
@@ -125,7 +128,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     clearStoredRefreshToken();
   }, []);
 
-  // Schedule token refresh
   const scheduleRefresh = useCallback(
     (expiresInSeconds: number, refreshFn: () => Promise<boolean>) => {
       if (!autoRefresh) return;
@@ -146,7 +148,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     [autoRefresh, refreshBeforeExpiry, clearAuth]
   );
 
-  // Refresh access token using stored refresh token
   const refreshTokenFn = useCallback(async (): Promise<boolean> => {
     const storedRefreshToken = getStoredRefreshToken();
     if (!storedRefreshToken) {
@@ -176,7 +177,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     }
   }, [apiUrls.refresh, clearAuth, scheduleRefresh]);
 
-  // Try to restore session on mount
   useEffect(() => {
     const restoreSession = async () => {
       const hasToken = !!getStoredRefreshToken();
@@ -195,7 +195,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     };
   }, [refreshTokenFn]);
 
-  // Notify on auth change
   useEffect(() => {
     onAuthChange?.(user);
   }, [user, onAuthChange]);
@@ -239,9 +238,10 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 
   /**
    * Register new user
+   * Returns { success, emailVerificationRequired }
    */
   const register = useCallback(
-    async (payload: RegisterPayload): Promise<boolean> => {
+    async (payload: RegisterPayload): Promise<RegisterResult> => {
       setIsLoading(true);
       setError(null);
 
@@ -256,19 +256,69 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 
         if (!response.ok) {
           setError(data.error || "Ошибка регистрации");
+          return { success: false, emailVerificationRequired: false };
+        }
+
+        // If email verification required, don't auto-login
+        if (data.email_verification_required) {
+          return {
+            success: true,
+            emailVerificationRequired: true,
+            message: data.message,
+          };
+        }
+
+        // Auto-login if no verification needed
+        const loginSuccess = await login({
+          email: payload.email,
+          password: payload.password,
+        });
+
+        return {
+          success: loginSuccess,
+          emailVerificationRequired: false,
+        };
+      } catch (err) {
+        setError("Ошибка сети");
+        return { success: false, emailVerificationRequired: false };
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [apiUrls.register, login]
+  );
+
+  /**
+   * Verify email with 6-digit code
+   */
+  const verifyEmail = useCallback(
+    async (email: string, code: string): Promise<boolean> => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(apiUrls.verifyEmail, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, code }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          setError(data.error || "Неверный код");
           return false;
         }
 
-        // Auto-login after registration
-        return await login({ email: payload.email, password: payload.password });
-      } catch (err) {
+        return true;
+      } catch {
         setError("Ошибка сети");
         return false;
       } finally {
         setIsLoading(false);
       }
     },
-    [apiUrls.register, login]
+    [apiUrls.verifyEmail]
   );
 
   /**
@@ -291,10 +341,10 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
   }, [apiUrls.logout, clearAuth]);
 
   /**
-   * Request password reset
+   * Request password reset code
    */
   const requestPasswordReset = useCallback(
-    async (email: string): Promise<{ token?: string }> => {
+    async (email: string): Promise<{ code?: string }> => {
       setError(null);
 
       try {
@@ -311,7 +361,8 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
           return {};
         }
 
-        return { token: data.reset_token };
+        // reset_code returned only in dev mode (no SMTP)
+        return { code: data.reset_code };
       } catch {
         setError("Ошибка сети");
         return {};
@@ -321,17 +372,17 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
   );
 
   /**
-   * Reset password with token
+   * Reset password with email, code and new password
    */
   const resetPassword = useCallback(
-    async (token: string, newPassword: string): Promise<boolean> => {
+    async (email: string, code: string, newPassword: string): Promise<boolean> => {
       setError(null);
 
       try {
         const response = await fetch(apiUrls.resetPassword, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, new_password: newPassword }),
+          body: JSON.stringify({ email, code, new_password: newPassword }),
         });
 
         const data = await response.json();
@@ -366,6 +417,7 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
     accessToken,
     login,
     register,
+    verifyEmail,
     logout,
     refreshToken: refreshTokenFn,
     requestPasswordReset,
@@ -378,11 +430,6 @@ export function useAuth(options: UseAuthOptions): UseAuthReturn {
 // УТИЛИТЫ
 // ============================================================================
 
-/**
- * Check if user might be authenticated (has refresh token in storage).
- * Note: This doesn't verify the token, just checks if one exists.
- * For actual auth state, use the useAuth hook.
- */
 export function mightBeAuthenticated(): boolean {
   return !!getStoredRefreshToken();
 }
