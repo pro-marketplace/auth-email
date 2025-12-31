@@ -1,8 +1,6 @@
 # Auth Email Extension
 
-Авторизация по email + пароль с JWT токенами.
-
-**1 функция** вместо 5 — экономит лимит.
+Авторизация по email + пароль с JWT токенами. **1 функция** вместо 5.
 
 ---
 
@@ -11,32 +9,24 @@
 **Спроси пользователя:**
 
 > Хотите подтверждение email и восстановление пароля через почту?
->
-> Для этого нужен Gmail с двухфакторной аутентификацией.
-> Без этого: регистрация работает сразу, сброс пароля возвращает код в ответе.
+> Для этого нужен Gmail с 2FA. Без этого всё работает, но коды приходят в ответе API.
 
-**Если ДА → добавь переменные:**
-```
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=xxxx xxxx xxxx xxxx  # App Password
-```
-
-**Если НЕТ → ничего не добавляй**, всё работает без email.
+**Если ДА** → добавь переменные `SMTP_USER` и `SMTP_PASSWORD` (Gmail App Password).
 
 ---
 
 ## Как это работает
 
-| SMTP настроен? | Регистрация | Вход | Сброс пароля |
-|----------------|-------------|------|--------------|
-| Нет | Сразу активен | Работает | Код в ответе API |
-| Да | Код на почту | После подтверждения | Код на почту |
+| SMTP | Регистрация | Сброс пароля |
+|------|-------------|--------------|
+| Нет | Сразу активен | Код в ответе API |
+| Да | Код на почту | Код на почту |
 
 ---
 
 ## Установка
 
-### 1. База данных
+### База данных
 
 ```sql
 CREATE TABLE users (
@@ -82,139 +72,72 @@ CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)
 CREATE INDEX idx_email_verification_tokens_hash ON email_verification_tokens(token_hash);
 ```
 
-### 2. Переменные окружения
-
-**Обязательные:**
+### Переменные окружения
 
 | Переменная | Описание |
 |------------|----------|
 | `DATABASE_URL` | PostgreSQL connection string |
-| `MAIN_DB_SCHEMA` | Схема БД проекта |
-| `JWT_SECRET` | Секретный ключ (`openssl rand -hex 32`) |
+| `MAIN_DB_SCHEMA` | Схема БД |
+| `JWT_SECRET` | `openssl rand -hex 32` |
+| `SMTP_USER` | Gmail (опционально) |
+| `SMTP_PASSWORD` | Gmail App Password (опционально) |
 
-**Для email (опционально):**
-
-| Переменная | Описание |
-|------------|----------|
-| `SMTP_USER` | Gmail адрес |
-| `SMTP_PASSWORD` | Gmail App Password |
-
-### 3. Настройка Gmail (если нужен email)
+### Gmail App Password
 
 1. Включи 2FA: https://myaccount.google.com/security
-2. Создай App Password: https://myaccount.google.com/apppasswords
-3. Выбери "Другое", введи название, скопируй 16-символьный пароль
-
----
-
-## После деплоя
-
-**ВАЖНО:** Обнови `AUTH_URL` в коде на URL из `backend/func2url.json`:
-
-```tsx
-const AUTH_URL = "https://functions.poehali.dev/xxx"; // ← заменить
-```
+2. Создай пароль: https://myaccount.google.com/apppasswords
 
 ---
 
 ## API
 
+**После деплоя** замени URL на значение из `backend/func2url.json`:
+
 ```
-POST /auth?action=register        - Регистрация
-POST /auth?action=verify-email    - Подтверждение email (code)
-POST /auth?action=login           - Вход
-POST /auth?action=refresh         - Обновление токена
-POST /auth?action=logout          - Выход
-POST /auth?action=reset-password  - Сброс пароля
-GET  /auth?action=health          - Проверка БД
-```
-
-### register
-
-```json
-// Request
-{ "email": "user@example.com", "password": "Pass123", "name": "Имя" }
-
-// Response (без SMTP)
-{ "user_id": 1, "message": "Регистрация успешна", "email_verification_required": false }
-
-// Response (с SMTP) - новый пользователь
-{ "user_id": 1, "message": "Код подтверждения отправлен на email", "email_verification_required": true }
-
-// Response (с SMTP) - email существует, но не подтверждён → переотправка кода
-{ "user_id": 1, "message": "Код подтверждения отправлен на email", "email_verification_required": true, "resent": true }
+POST ?action=register      → { email, password, name? }
+POST ?action=verify-email  → { email, code }
+POST ?action=login         → { email, password }
+POST ?action=refresh       → { refresh_token }
+POST ?action=logout        → { refresh_token }
+POST ?action=reset-password→ { email } или { email, code, new_password }
 ```
 
-### verify-email
-
-```json
-// Request
-{ "email": "user@example.com", "code": "123456" }
-
-// Response
-{ "message": "Email подтверждён" }
-```
-
-### login
-
-```json
-// Request
-{ "email": "user@example.com", "password": "Pass123" }
-
-// Response
-{
-  "access_token": "eyJ...",
-  "refresh_token": "eyJ...",
-  "expires_in": 900,
-  "user": { "id": 1, "email": "...", "name": "...", "email_verified": true }
-}
-```
-
-### reset-password
-
-```json
-// Step 1: Запрос кода
-{ "email": "user@example.com" }
-// Response (без SMTP): { "message": "...", "reset_code": "123456" }
-// Response (с SMTP): { "message": "Если пользователь существует, код будет отправлен" }
-
-// Step 2: Новый пароль
-{ "email": "user@example.com", "code": "123456", "new_password": "NewPass123" }
-// Response: { "message": "Пароль успешно изменён" }
-```
+**Важно:** Если `email_verification_required: true` в ответе register — покажи форму ввода 6-значного кода.
 
 ---
 
 ## Frontend
 
+| Файл | Описание |
+|------|----------|
+| `useAuth.ts` | Хук авторизации |
+| `LoginForm.tsx` | Форма входа |
+| `RegisterForm.tsx` | Регистрация + ввод кода |
+| `ResetPasswordForm.tsx` | Сброс пароля |
+| `UserProfile.tsx` | Профиль после входа |
+
 ```tsx
-const AUTH_URL = "https://functions.poehali.dev/xxx";
+const AUTH_URL = "https://functions.poehali.dev/xxx"; // ← из func2url.json
 
 const auth = useAuth({
   apiUrls: {
     login: `${AUTH_URL}?action=login`,
     register: `${AUTH_URL}?action=register`,
+    verifyEmail: `${AUTH_URL}?action=verify-email`,
     refresh: `${AUTH_URL}?action=refresh`,
     logout: `${AUTH_URL}?action=logout`,
     resetPassword: `${AUTH_URL}?action=reset-password`,
   },
 });
 
-// Для verify-email добавь состояние в форму регистрации
-// Если email_verification_required === true, показывай поле ввода кода
+// После входа: auth.isAuthenticated && auth.user → показать UserProfile
+// Иначе: LoginForm или RegisterForm
 ```
 
 ---
 
 ## Безопасность
 
-- bcrypt для паролей
-- JWT access tokens (15 мин)
-- Refresh tokens (30 дней) в localStorage
-- Rate limiting (5 попыток, блокировка 15 мин)
-- 6-значные коды для верификации
-
-### XSS
-
-Токены в localStorage — стандарт для кросс-доменных SPA.
-Используйте CSP: `Content-Security-Policy: default-src 'self'`
+- bcrypt, JWT access (15 мин), refresh (30 дней) в localStorage
+- Rate limiting: 5 попыток, блок 15 мин
+- 6-значные коды через `secrets`
