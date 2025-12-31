@@ -78,6 +78,7 @@ export function RegisterForm({
   const [code, setCode] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [isResending, setIsResending] = useState(false);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,15 +141,20 @@ export function RegisterForm({
   const handleResend = async () => {
     setLocalError(null);
     setCode("");
+    setIsResending(true);
 
-    const result = await onRegister({
-      email,
-      password,
-      name: name || undefined,
-    });
+    try {
+      const result = await onRegister({
+        email,
+        password,
+        name: name || undefined,
+      });
 
-    if (result.success) {
-      setMessage("Код отправлен повторно");
+      if (result.success) {
+        setMessage("Код отправлен повторно");
+      }
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -216,10 +222,10 @@ export function RegisterForm({
               <button
                 type="button"
                 onClick={handleResend}
-                disabled={isLoading}
-                className="text-primary hover:underline underline-offset-4"
+                disabled={isLoading || isResending}
+                className="text-primary hover:underline underline-offset-4 disabled:opacity-50"
               >
-                Отправить код повторно
+                {isResending ? "Отправка..." : "Отправить код повторно"}
               </button>
             </div>
           </CardFooter>
